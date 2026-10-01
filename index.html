@@ -479,6 +479,23 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
  </form>
 </dialog>
 
+<dialog id="merger">
+ <form id="mergeForm">
+  <h2>Combine with an eBay listing</h2>
+  <p id="mergeSource"></p>
+  <p>Choose the imported listing for this exact item. Check its title and SKU before combining.</p>
+  <label for="mergeSearch">Search imported listings</label>
+  <input id="mergeSearch" placeholder="NCAA Football or 0163">
+  <label for="mergeTarget">Matching listings</label>
+  <select id="mergeTarget" required></select>
+  <p id="mergePreview" class="small" style="white-space:pre-line"></p>
+  <p>The listing keeps its eBay number, title, SKU, price and saved status. Photos, location and physical check are kept together. The separate manual record is removed only after saving succeeds. This does not change eBay.</p>
+  <div class="actions">
+   <button id="mergeSave" class="primary" type="submit" disabled>Combine These Records</button>
+   <button type="button" class="secondary" data-close="merger">Cancel</button>
+  </div>
+ </form>
+</dialog>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 const APP = "old-carpenter-ebay-inventory";
@@ -680,7 +697,7 @@ function work(fn) {
    await fn(...args);
   } catch (e) {
    notify(e.message || "The operation failed. Nothing was intentionally removed.", true);
-   if ($("editor").open || $("checker").open) {
+   if ($("editor").open || $("checker").open || $("merger").open) {
     alert(e.message || "The operation failed.");
    }
   } finally {
@@ -883,10 +900,14 @@ function card(x, verify = false) {
   (!verify ?
    '<button class="secondary" data-match="' + esc(x.id) +
    '">Check physical stock</button>' : "") +
+  (!verify && !x.ebayId ? '<button class="secondary" data-combine="' + esc(x.id) + '">Combine with eBay listing</button>' : '') +
   '</div></div></article>';
 }
 
 function bindCards(el) {
+ el.querySelectorAll("[data-combine]").forEach(b => {
+  b.onclick = () => openMerge(b.dataset.combine);
+ });
  el.querySelectorAll("[data-edit]").forEach(b => {
   b.onclick = () => openEditor(b.dataset.edit);
  });
@@ -1053,6 +1074,68 @@ function openEditor(id = null, prefill = {}) {
  previewPhotos();
  $("editor").showModal();
 }
+
+let mergeSourceId = null;
+function combinedRecord(source, target) {
+ if (!source || !target || source.id === target.id || source.ebayId || !target.ebayId)
+  throw Error("Choose a manual record and its imported eBay listing.");
+ const photos = [...new Set([...target.photos, ...source.photos])];
+ if (photos.length > 12) throw Error("These records have more than 12 photos together. Remove unwanted photos first.");
+ const locationKey = v => v.toLowerCase().replace(/[\s-]/g, "");
+ if (source.location && target.location && locationKey(source.location) !== locationKey(target.location))
+  throw Error("The storage locations differ. Use View / Edit to correct them before combining.");
+ if (source.checkedAt && target.checkedAt && source.physicalQty !== target.physicalQty)
+  throw Error("The physical counts differ. Check and correct the counts before combining.");
+ const physical = source.checkedAt && (!target.checkedAt || Date.parse(source.checkedAt) > Date.parse(target.checkedAt)) ? source : target;
+ return normalizeItem({...target, photos,
+  location: target.location || source.location,
+  physicalQty: physical.physicalQty, checkedAt: physical.checkedAt,
+  notes: [...new Set([target.notes, source.notes].filter(Boolean))].join("\n\n"),
+  updatedAt: stamp()});
+}
+function previewMerge() {
+ const source = state.items.find(x => x.id === mergeSourceId);
+ const target = state.items.find(x => x.id === $("mergeTarget").value);
+ $("mergeSave").disabled = true;
+ if (!target) { $("mergePreview").textContent = "Choose a listing to see what will be saved."; return; }
+ try {
+  const x = combinedRecord(source, target);
+  $("mergePreview").textContent = x.title + "\neBay # " + x.ebayId + " · SKU: " + x.sku +
+   "\n" + money(x.price) + " · Saved status: " + x.status +
+   "\nLocation: " + (x.location || "Missing") + " · Photos: " + x.photos.length +
+   "\nPhysical quantity: " + (x.physicalQty ?? "Not checked") + " · Check: " + when(x.checkedAt) +
+   "\nListing quantity: " + (x.listingQty ?? "Unknown");
+  $("mergeSave").disabled = false;
+ } catch(e) { $("mergePreview").textContent = e.message; }
+}
+function searchMerge() {
+ const matches = searchItems($("mergeSearch").value, state.items.filter(x => x.ebayId));
+ $("mergeTarget").innerHTML = '<option value="">Choose the matching listing (' + matches.length + ' found)</option>' +
+  matches.map(x => '<option value="' + esc(x.id) + '">' + esc(x.title + " · SKU: " + x.sku + " · eBay # " + x.ebayId) + '</option>').join("");
+ previewMerge();
+}
+function openMerge(id) {
+ if (locked) return;
+ const source = state.items.find(x => x.id === id);
+ if (!source || source.ebayId) return;
+ mergeSourceId = id;
+ $("mergeSource").textContent = "Manual record: " + source.title + " · SKU: " + (source.sku || "Missing");
+ $("mergeSearch").value = source.sku || source.title;
+ searchMerge();
+ $("merger").showModal();
+}
+$("mergeSearch").oninput = searchMerge;
+$("mergeTarget").onchange = previewMerge;
+$("mergeForm").onsubmit = work(async () => {
+ const source = state.items.find(x => x.id === mergeSourceId);
+ const target = state.items.find(x => x.id === $("mergeTarget").value);
+ const combined = combinedRecord(source, target);
+ const next = copy(state);
+ next.items = next.items.filter(x => x.id !== source.id).map(x => x.id === target.id ? combined : x);
+ await commit(next);
+ $("merger").close();
+ notify("Records combined. Photo, location and physical check saved with the eBay listing.");
+});
 
 function openCheck(id) {
  if (locked) return;
