@@ -257,6 +257,19 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
    </div>
   </section>
 
+  <section id="totePage" hidden>
+   <div class="panel">
+    <button id="allTotes" class="secondary">← All Totes</button>
+    <h2 id="toteTitle"></h2>
+    <p id="toteSummary"></p>
+    <p class="small">These are saved locations. Use Move to another tote after moving the physical item. A move changes the entire record’s location; it does not split quantities between totes. Confirm location / stock after the move.</p>
+    <div class="searchbar"><input id="toteSearch" type="search" placeholder="Search within this tote"><select id="toteVerification" aria-label="Filter tote verification"><option value="">All location checks</option><option value="confirmed">Location confirmed</option><option value="unverified">Location not verified</option></select></div>
+    <button id="pageToteLabel" class="secondary">Make This Tote’s QR Label</button>
+   </div>
+   <div id="toteCards" class="grid"></div>
+   <button id="toteMore" class="secondary" hidden>Show More Items</button>
+  </section>
+
   <section id="connection" hidden>
    <div class="panel">
     <h2>eBay Connection</h2>
@@ -371,6 +384,16 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
 
 <datalist id="toteOptions"></datalist>
 
+<dialog id="moveDialog">
+ <form id="moveForm">
+  <h2>Move to Another Tote</h2>
+  <h3 id="moveTitle"></h3><p id="moveFrom"></p>
+  <label for="moveDestination">New tote / storage location</label>
+  <input id="moveDestination" list="toteOptions" maxlength="160" required placeholder="A8">
+  <p class="small">Move all pieces represented by this record. This saves the new location to your account and marks it not verified until you confirm the physical count there. Photos, eBay number, notes and quantities are kept.</p>
+  <div class="actions"><button type="submit" class="primary">Save New Location</button><button type="button" class="secondary" data-close="moveDialog">Cancel</button></div>
+ </form>
+</dialog>
 <dialog id="labelDialog">
  <h2>40 × 30 mm QR Label</h2>
  <img id="labelPreview" alt="Label preview" style="width:100%;max-width:480px;border:1px solid #ddd">
@@ -3229,11 +3252,13 @@ function card(x, verify = false) {
   (!verify ?
    '<button class="secondary" data-match="' + esc(x.id) +
    '">Confirm location / stock</button>' : "") +
+  (!verify ? '<button class="secondary" data-move="' + esc(x.id) + '">Move to another tote</button>' : '') +
   (!verify && !x.ebayId ? '<button class="secondary" data-combine="' + esc(x.id) + '">Combine with eBay listing</button>' : '') +
   '</div></div></article>';
 }
 
 function bindCards(el) {
+ el.querySelectorAll("[data-move]").forEach(b => { b.onclick = () => openMove(b.dataset.move); });
  el.querySelectorAll("[data-combine]").forEach(b => {
   b.onclick = () => openMerge(b.dataset.combine);
  });
@@ -3262,6 +3287,7 @@ function renderAll() {
  if (currentView === "inventory") renderInventory();
  if (currentView === "verify") renderMatches();
  if (currentView === "locations") renderLocations();
+ if (currentView === "totePage") renderTotePage();
  if (currentView === "problems") renderProblems();
 }
 
@@ -3329,15 +3355,9 @@ function renderLocations() {
   ' records · ' + state.items.filter(x => x.location.toLowerCase() === n.toLowerCase() && locationConfirmed(x)).length + ' confirmed</small></button>'
  ).join("");
 
- $("locationsGrid").querySelectorAll("[data-tote]").forEach(b => {
-  b.onclick = () => {
-   $("search").value = "";
-   $("statusFilter").value = "";
-   $("locationFilter").value = "";
-   $("toteFilter").value = b.dataset.tote;
-   show("inventory");
-  };
- });
+ $("locationsGrid").insertAdjacentHTML("beforeend", '<button class="tote secondary" id="unassignedTote"><strong>Location missing</strong><small>' + state.items.filter(x=>!x.location).length + ' records</small></button>');
+ $("unassignedTote").onclick = () => openTote("");
+ $("locationsGrid").querySelectorAll("[data-tote]").forEach(b => { b.onclick = () => openTote(b.dataset.tote); });
 }
 
 function renderProblems() {
@@ -3990,7 +4010,7 @@ function openQrDestination() {
  } else if (params.has("tote")) {
   $("search").value = ""; $("statusFilter").value = "";
    $("locationFilter").value = "";
-  $("toteFilter").value = params.get("tote"); show("inventory");
+  openTote(params.get("tote"));
  }
 }
 window.addEventListener("hashchange",openQrDestination);
@@ -4055,6 +4075,63 @@ function labelPdfBytes(canvas) {
  const result=new Uint8Array(size);let pos=0;for(const part of chunks){result.set(part,pos);pos+=part.length;}return result;
 }
 $("labelPdf").onclick=work(()=>{if(labelCanvas)download(labelFilename+".pdf",labelPdfBytes(labelCanvas),"application/pdf");});
+
+
+let selectedTote = "", toteLimit = 40, movingItemId = null;
+function toteItems(name) {
+ return state.items.filter(x => x.location.toLowerCase() === name.toLowerCase());
+}
+function openTote(name) {
+ if (locked) return;
+ selectedTote = name; toteLimit = 40;
+ $("toteSearch").value = ""; $("toteVerification").value = "";
+ show("totePage");
+}
+function renderTotePage() {
+ const items = toteItems(selectedTote);
+ const confirmed = items.filter(locationConfirmed).length;
+ $("toteTitle").textContent = selectedTote ? "Tote / location: " + selectedTote : "Location missing";
+ let rows = searchItems($("toteSearch").value, items);
+ if ($("toteVerification").value) rows = rows.filter(x => locationConfirmed(x) === ($("toteVerification").value === "confirmed"));
+ rows.sort((a,b)=>a.title.localeCompare(b.title,undefined,{numeric:true}));
+ $("toteSummary").textContent = items.length + " records · " + confirmed + " confirmed · " + (items.length-confirmed) + " not verified. Showing " + Math.min(toteLimit,rows.length) + " of " + rows.length + " matching records.";
+ $("pageToteLabel").hidden = !selectedTote;
+ $("toteCards").innerHTML = rows.slice(0,toteLimit).map(x=>card(x)).join("") || '<p class="empty">No items match in this location.</p>';
+ $("toteMore").hidden = rows.length <= toteLimit;
+ bindCards($("toteCards"));
+}
+function openMove(id) {
+ if (locked) return;
+ const x = state.items.find(x=>x.id===id); if (!x) return;
+ movingItemId=id; $("moveForm").reset();
+ $("moveTitle").textContent=x.title;
+ $("moveFrom").textContent="Current location: " + (x.location || "Location missing");
+ $("moveDestination").value=""; $("moveDialog").showModal();
+}
+function moveRecord(item, destination) {
+ destination=destination.trim();
+ if (!destination || destination.length>160) throw Error("Enter a new tote or storage location, up to 160 characters.");
+ if (destination.toLowerCase()===item.location.toLowerCase()) throw Error("This item is already in that location. Choose another tote.");
+ return normalizeItem({...item,location:destination,checkedAt:"",updatedAt:stamp()});
+}
+$("moveForm").onsubmit=work(async e=>{
+ e.preventDefault();
+ const item=state.items.find(x=>x.id===movingItemId);
+ if (!item) throw Error("This item no longer exists. Refresh your inventory.");
+ let destination=$("moveDestination").value.trim();
+ // Reuse the existing spelling so A1 and a1 do not create separate tote names.
+ const known=[...Array.from({length:16},(_,i)=>"A"+(i+1)),...state.items.map(x=>x.location)];
+ destination=known.find(n=>n.toLowerCase()===destination.toLowerCase()) || destination;
+ const updated=moveRecord(item,destination);
+ await mergeItems([updated]);
+ $("moveDialog").close(); movingItemId=null;
+ notify("Moved " + item.title + " to " + destination + ". Confirm location / stock after checking it there.");
+});
+$("allTotes").onclick=()=>{if(!locked)show("locations");};
+$("toteSearch").oninput=()=>{toteLimit=40;renderTotePage();};
+$("toteVerification").onchange=()=>{toteLimit=40;renderTotePage();};
+$("toteMore").onclick=()=>{toteLimit+=40;renderTotePage();};
+$("pageToteLabel").onclick=work(()=>makeLabel(null,selectedTote));
 
 async function start() {
  if (/\/(electronics-inventory|old-carpenters-notepad)(\/|$)/i.test(location.pathname)) {
