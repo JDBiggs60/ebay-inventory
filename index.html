@@ -775,7 +775,7 @@ async function commit(next) {
  const records = [];
  for (const item of next.items) {
   const photoPaths = [];
-  for (const data of item.photos) {
+  for (const data of new Set(item.photos)) {
    const blob = await (await fetch(data)).blob();
    const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",await blob.arrayBuffer())))
     .map(n => n.toString(16).padStart(2,"0")).join("");
@@ -790,6 +790,7 @@ async function commit(next) {
  const revision = resultOrThrow(await cloud.rpc("ebay_save_inventory", {
   expected_revision:state.revision, items:records, imported_at:next.importedAt || null
  }));
+ next.items = next.items.map(item => ({...item, photos:[...new Set(item.photos)]}));
  next.revision = revision;
  state = next;
  renderAll();
@@ -1322,7 +1323,8 @@ $("checkForm").onsubmit = work(async e => {
  if (qty === null) throw Error("Enter the number you physically counted.");
  if (qty > 0 && !location) throw Error("Enter the item's physical location.");
 
- if ($("attachPhoto").checked && x.photos.length >= 12) {
+ const addVerificationPhoto = $("attachPhoto").checked && verifyPhoto && !x.photos.includes(verifyPhoto);
+ if (addVerificationPhoto && x.photos.length >= 12) {
   throw Error(
    "This record already has 12 photos. Remove a photo before adding another."
   );
@@ -1334,7 +1336,7 @@ $("checkForm").onsubmit = work(async e => {
   location,
   checkedAt: stamp(),
   updatedAt: stamp(),
-  photos: $("attachPhoto").checked && verifyPhoto ?
+  photos: addVerificationPhoto ?
    [...x.photos, verifyPhoto] : x.photos
  });
 
