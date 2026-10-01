@@ -98,6 +98,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
  .actions .button,.actions button{flex:1}
  dialog{padding:18px}
 }
+.location-confirmed{display:inline-block;background:#dff3e4;color:#15562a;padding:5px 9px;border-radius:8px;font-size:14px;font-weight:bold}.location-unverified{display:inline-block;background:#fff0d2;color:#744800;padding:5px 9px;border-radius:8px;font-size:14px;font-weight:bold}
 </style>
 </head>
 <body>
@@ -229,6 +230,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
       <option>Not listed</option>
      </select>
 
+     <select id="locationFilter" aria-label="Filter location verification"><option value="">All location checks</option><option value="confirmed">Location confirmed</option><option value="unverified">Location not verified</option></select>
      <input id="toteFilter" list="toteOptions" aria-label="Filter location"
       placeholder="All totes / locations">
     </div>
@@ -247,7 +249,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
    <div class="panel">
     <h2>Storage Locations</h2>
     <p>
-     Tap a tote to see its recorded contents.
+     Tap a tote to see its recorded contents. Green means a physical check found stock there; amber means the location still needs checking.
      The count is inventory records, not total pieces.
     </p>
     <label for="labelTote">Tote to label</label><input id="labelTote" list="toteOptions" maxlength="160" placeholder="A1"><button id="toteLabel" class="secondary">Make Tote QR Label</button>
@@ -431,6 +433,9 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
    </div>
   </div>
 
+  <p id="locationSummary"></p>
+  <p class="small">Confirm a location by counting the item in that tote using “Confirm location / stock.” Typing or importing a tote name does not confirm it. Changing the location clears its previous check date; the previous quantity remains for reference until you recount.</p>
+  <button id="confirmEditorLocation" type="button" class="secondary" hidden>Confirm location / stock</button>
   <p id="physicalSummary" class="small"></p>
 
   <label>Item photos</label>
@@ -461,7 +466,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
 
 <dialog id="checker">
  <form id="checkForm">
-  <h2>Confirm Physical Stock</h2>
+  <h2>Confirm Location &amp; Physical Stock</h2>
   <h3 id="checkTitle"></h3>
   <p id="checkHint" class="small"></p>
   <input id="checkId" type="hidden">
@@ -480,7 +485,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
 
   <p class="small">
    This records your count and today's date.
-   It does not change or verify the listing on eBay.
+   A count above zero confirms this location on today’s date. A count of zero leaves the location unverified. It does not change or verify the listing on eBay.
   </p>
 
   <div class="actions">
@@ -3143,10 +3148,22 @@ function searchItems(query, items = state.items) {
  });
 }
 
+function locationConfirmed(x) {
+ return Boolean(x.location && x.checkedAt && x.physicalQty > 0);
+}
+function locationBadge(x) {
+ return '<span class="' + (locationConfirmed(x) ? 'location-confirmed' : 'location-unverified') + '">' +
+  (locationConfirmed(x) ? '✓ Location confirmed' : 'Location not verified') + '</span>';
+}
+function invalidateMovedLocation(draft, previous) {
+ if (previous && draft.location.trim().toLowerCase() !== previous.location.trim().toLowerCase()) draft.checkedAt = '';
+ return draft;
+}
 function issues(x) {
  const a = [];
 
  if (!x.location) a.push("Location missing");
+ else if (!locationConfirmed(x)) a.push("Location not verified");
  if (x.status === "Unknown") a.push("Listing status unknown");
 
  if (x.status === "Active" && !x.ebayId) {
@@ -3196,7 +3213,8 @@ function card(x, verify = false) {
   '<div class="item-body">' + badge +
   '<h3>' + esc(x.title) + '</h3>' +
   '<strong>' + money(x.price) + '</strong>' +
-  '<p>📍 ' + esc(x.location || "Location missing") + '</p>' +
+  '<p>📍 ' + esc(x.location || "Location missing") + '</p>' + locationBadge(x) +
+  (locationConfirmed(x) ? '<p class="small">Location checked: ' + esc(when(x.checkedAt)) + '</p>' : '') +
   '<p class="small">eBay # ' + esc(x.ebayId || "Not linked") +
   '<br>SKU: ' + esc(x.sku || "Not recorded") +
   '<br>Listing qty: ' + (x.listingQty ?? "Unknown") +
@@ -3210,7 +3228,7 @@ function card(x, verify = false) {
   '</button>' +
   (!verify ?
    '<button class="secondary" data-match="' + esc(x.id) +
-   '">Check physical stock</button>' : "") +
+   '">Confirm location / stock</button>' : "") +
   (!verify && !x.ebayId ? '<button class="secondary" data-combine="' + esc(x.id) + '">Combine with eBay listing</button>' : '') +
   '</div></div></article>';
 }
@@ -3249,6 +3267,7 @@ function renderAll() {
 
 function renderInventory() {
  let rows = searchItems($("search").value);
+ if ($("locationFilter").value) rows = rows.filter(x => locationConfirmed(x) === ($("locationFilter").value === "confirmed"));
 
  if ($("statusFilter").value) {
   rows = rows.filter(x => x.status === $("statusFilter").value);
@@ -3307,13 +3326,14 @@ function renderLocations() {
   '<button class="tote secondary" data-tote="' + esc(n) + '">' +
   '<strong>🗄️ ' + esc(n) + '</strong><small>' +
   state.items.filter(x => x.location.toLowerCase() === n.toLowerCase()).length +
-  ' records</small></button>'
+  ' records · ' + state.items.filter(x => x.location.toLowerCase() === n.toLowerCase() && locationConfirmed(x)).length + ' confirmed</small></button>'
  ).join("");
 
  $("locationsGrid").querySelectorAll("[data-tote]").forEach(b => {
   b.onclick = () => {
    $("search").value = "";
    $("statusFilter").value = "";
+   $("locationFilter").value = "";
    $("toteFilter").value = b.dataset.tote;
    show("inventory");
   };
@@ -3377,6 +3397,8 @@ function openEditor(id = null, prefill = {}) {
  }
 
  $("editorTitle").textContent = id ? "Item details" : "Add an inventory item";
+ $("confirmEditorLocation").hidden = !id;
+ $("locationSummary").innerHTML = locationBadge(x);
  $("physicalSummary").textContent = id ?
   "Physical count: " + (x.physicalQty ?? "Not checked") +
    " · Last check: " + when(x.checkedAt) :
@@ -3549,12 +3571,12 @@ function exportCsv() {
  const headers = [
   "Title", "Item number", "Custom label (SKU)", "Status", "Price",
   "Listing quantity", "Physical quantity", "Location",
-  "Physically checked", "Status recorded", "Source", "Notes"
+  "Location verification", "Physically checked", "Status recorded", "Source", "Notes"
  ];
 
  const rows = state.items.map(x => [
   x.title, x.ebayId, x.sku, x.status, x.price, x.listingQty,
-  x.physicalQty, x.location, x.checkedAt, x.statusAt, x.source, x.notes
+  x.physicalQty, x.location, locationConfirmed(x) ? "Location confirmed" : "Location not verified", x.checkedAt, x.statusAt, x.source, x.notes
  ]);
 
  download(
@@ -3692,7 +3714,7 @@ $("editForm").onsubmit = work(async e => {
   draft.statusAt = draft.status === "Unknown" ? "" : time;
  }
 
- const x = normalizeItem(draft);
+ const x = normalizeItem(invalidateMovedLocation(draft, previous));
  const key = listingKey(x);
 
  if (key && state.items.some(y => y.id !== x.id && listingKey(y) === key)) {
@@ -3738,7 +3760,7 @@ $("checkForm").onsubmit = work(async e => {
 
  await mergeItems([updated]);
  $("checker").close();
- notify("Physical check saved. Listing status has not been checked live.");
+ notify(locationConfirmed(updated) ? "Location confirmed and physical count saved. Listing status has not been checked live." : "Physical count saved. Location remains not verified because no stock was found there.");
 });
 
 $("removeItem").onclick = work(async () => {
@@ -3924,6 +3946,15 @@ $("restoreConfirm").onclick = work(async () => {
 $("csvExport").onclick = exportCsv;
 $("search").oninput = renderInventory;
 $("statusFilter").onchange = renderInventory;
+$("locationFilter").onchange = renderInventory;
+$("confirmEditorLocation").onclick = () => {
+ if (locked || !editingId) return;
+ const x = state.items.find(x => x.id === editingId);
+ if (!x) return;
+ const changed = ["title","ebayId","sku","status","price","listingQty","location","notes"].some(k => $("f_"+k).value !== String(x[k] ?? "")) || JSON.stringify(editPhotos) !== JSON.stringify(x.photos);
+ if (changed) { notify("Save your item changes first, then reopen it to confirm its location.",true); return; }
+ $("editor").close(); openCheck(editingId);
+};
 $("toteFilter").oninput = renderInventory;
 $("matchSearch").oninput = renderMatches;
 
@@ -3958,6 +3989,7 @@ function openQrDestination() {
   else notify("This QR item's record is not in the signed-in inventory. Check the account or whether it was removed.",true);
  } else if (params.has("tote")) {
   $("search").value = ""; $("statusFilter").value = "";
+   $("locationFilter").value = "";
   $("toteFilter").value = params.get("tote"); show("inventory");
  }
 }
