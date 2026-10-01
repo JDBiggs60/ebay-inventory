@@ -111,10 +111,16 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
 <div id="message" role="status" aria-live="polite" hidden></div>
 <p id="loading" class="container">Opening inventory…</p>
 
+<section id="signin" class="container" hidden><div class="panel">
+<h2>Sign in to eBay Inventory</h2><p>Use your Electronics Inventory email and password.</p>
+<form id="loginForm"><label for="email">Email</label><input id="email" type="email" autocomplete="username" required>
+<label for="password">Password</label><input id="password" type="password" autocomplete="current-password" required>
+<button type="button" id="showPassword" class="secondary">Show password</button><button class="primary">Sign in</button></form>
+</div></section>
 <div id="application" hidden>
  <div class="toolbar">
   <button id="back" class="secondary" data-view="home" hidden>← Home</button>
-  <span class="small">First version · Saved on this browser · eBay not connected</span>
+  <span class="small">Cloud inventory · eBay listings not connected live</span><button id="reloadCloud" class="secondary">Refresh</button><button id="migrateLocal" class="secondary" hidden>Copy previous browser inventory</button><button id="logout" class="secondary">Sign out</button>
  </div>
 
  <main class="container">
@@ -167,8 +173,8 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
    </div>
 
    <p class="small">
-    Start with a few test items. Phone and computer data are separate until
-    cloud synchronization is added. Download a backup before clearing browser data.
+    Start with a few test items. Sign in with the same account on your phone and computer.
+    Tap Refresh to load changes saved on another device. Keep a downloaded backup too.
    </p>
   </section>
 
@@ -473,6 +479,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
  </form>
 </dialog>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 const APP = "old-carpenter-ebay-inventory";
 const STATUSES = ["Unknown", "Active", "Sold", "Ended", "Not listed"];
@@ -633,6 +640,8 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({
  "'": "&#39;"
 }[c]));
 
+const cloud = supabase.createClient("https://tgdyvyyggybatctevywf.supabase.co", "sb_publishable_4a-tmm6M4lKpTRyVT10uTw_eB3ghxvG", {auth: {storageKey: APP + "-auth", persistSession: true, autoRefreshToken: true}});
+let accountId = "";
 let database;
 let state = {revision: 0, items: [], importedAt: ""};
 let editingId = null;
@@ -713,39 +722,75 @@ function readState() {
  });
 }
 
-async function commit(next) {
- next.items = validateBackup({app: APP, version: 1, items: next.items});
-
- await new Promise((resolve, reject) => {
-  const tx = database.transaction("state", "readwrite");
-  const store = tx.objectStore("state");
-  const req = store.get("inventory");
-  let conflict = false;
-
-  req.onsuccess = () => {
-   const actual = req.result?.revision || 0;
-
-   if (actual !== state.revision) {
-    conflict = true;
-    tx.abort();
-    return;
-   }
-
-   next.revision = actual + 1;
-   store.put(next, "inventory");
-  };
-
-  tx.oncomplete = resolve;
-  tx.onerror = () => reject(
-   Error("Save failed. Check browser storage space and keep a backup.")
-  );
-  tx.onabort = () => reject(Error(
-   conflict ?
-    "Another tab changed the inventory. Reload before saving your changes." :
-    "The save did not complete."
-  ));
+function resultOrThrow(result) {
+ if (result.error) throw Error(result.error.message);
+ return result.data;
+}
+async function rowsOf(table, order) {
+ const rows = [];
+ for (let offset = 0; ; offset += 500) {
+  let query = cloud.from(table).select("*").eq("user_id", accountId).order(order);
+  if (table === "ebay_inventory_item_photos") query = query.order("position");
+  const page = resultOrThrow(await query.range(offset, offset + 499));
+  rows.push(...page);
+  if (page.length < 500) return rows;
+ }
+}
+function blobData(blob) {
+ return new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(reader.result);
+  reader.onerror = () => reject(Error("Could not load an inventory photo."));
+  reader.readAsDataURL(blob);
  });
-
+}
+async function cloudState() {
+ for (let attempt = 0; attempt < 3; attempt++) {
+  const before = resultOrThrow(await cloud.from("ebay_inventory_state").select("*").eq("user_id", accountId).maybeSingle());
+  const items = await rowsOf("ebay_inventory_items", "id");
+  const photos = await rowsOf("ebay_inventory_item_photos", "item_id");
+  const after = resultOrThrow(await cloud.from("ebay_inventory_state").select("*").eq("user_id", accountId).maybeSingle());
+  if ((before?.revision || 0) !== (after?.revision || 0)) continue;
+  const mapped = items.map(x => ({id:x.id,title:x.title,ebayId:x.ebay_id,sku:x.sku,status:x.status,price:x.price,
+   listingQty:x.listing_qty,physicalQty:x.physical_qty,location:x.location,notes:x.notes,checkedAt:x.checked_at || "",
+   statusAt:x.status_at || "",source:x.source,updatedAt:x.updated_at,photos:[]}));
+  const byId = new Map(mapped.map(x => [x.id,x]));
+  let cursor = 0;
+  await Promise.all(Array.from({length:Math.min(4,photos.length)}, async () => {
+   while (cursor < photos.length) {
+    const p = photos[cursor++];
+    const blob = resultOrThrow(await cloud.storage.from("ebay-photos").download(p.storage_path));
+    const item = byId.get(p.item_id);
+    if (!item) throw Error("Inventory changed while loading. Tap Refresh.");
+    item.photos[p.position] = await blobData(blob);
+   }
+  }));
+  return {revision: after?.revision || 0, importedAt:after?.imported_at || "", items:validateBackup({app:APP,version:1,items:mapped})};
+ }
+ throw Error("Inventory is changing on another device. Try Refresh again.");
+}
+async function commit(next) {
+ if (!accountId) throw Error("Sign in before saving.");
+ next.items = validateBackup({app:APP,version:1,items:next.items});
+ const records = [];
+ for (const item of next.items) {
+  const photoPaths = [];
+  for (const data of item.photos) {
+   const blob = await (await fetch(data)).blob();
+   const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",await blob.arrayBuffer())))
+    .map(n => n.toString(16).padStart(2,"0")).join("");
+   const path = accountId + "/" + item.id + "/" + hash + ".jpg";
+   const uploaded = await cloud.storage.from("ebay-photos").upload(path,blob,{contentType:"image/jpeg",upsert:false});
+   if (uploaded.error && !/already exists|duplicate/i.test(uploaded.error.message)) throw Error(uploaded.error.message);
+   photoPaths.push(path);
+  }
+  const {photos, ...record} = item;
+  records.push({...record,photoPaths});
+ }
+ const revision = resultOrThrow(await cloud.rpc("ebay_save_inventory", {
+  expected_revision:state.revision, items:records, imported_at:next.importedAt || null
+ }));
+ next.revision = revision;
  state = next;
  renderAll();
 }
@@ -1261,7 +1306,7 @@ $("editForm").onsubmit = work(async e => {
 
  await mergeItems([x]);
  $("editor").close();
- notify("Item saved on this browser. No eBay listing was changed.");
+ notify("Item saved to your cloud inventory. No eBay listing was changed.");
 });
 
 $("checkForm").onsubmit = work(async e => {
@@ -1502,8 +1547,18 @@ async function start() {
   );
  }
 
+ if (!window.supabase) throw Error("Connection library did not load. Reload with an Internet connection.");
+ const session = resultOrThrow(await cloud.auth.getSession());
+ if (!session.session) {
+  $("loading").hidden = true;
+  $("signin").hidden = false;
+  return;
+ }
+ accountId = session.session.user.id;
  await openDatabase();
- state = await readState();
+ const previous = await readState();
+ $("migrateLocal").hidden = !previous.items.length;
+ state = await cloudState();
  state.items = validateBackup({app: APP, version: 1, items: state.items});
  renderAll();
 
@@ -1515,6 +1570,29 @@ async function start() {
  $("application").hidden = false;
 }
 
+$("loginForm").onsubmit = work(async () => {
+ resultOrThrow(await cloud.auth.signInWithPassword({email:$("email").value.trim(),password:$("password").value}));
+ $("password").value = "";
+ $("signin").hidden = true;
+ await start();
+});
+$("showPassword").onclick = () => {
+ const show = $("password").type === "password";
+ $("password").type = show ? "text" : "password";
+ $("showPassword").textContent = show ? "Hide password" : "Show password";
+};
+$("reloadCloud").onclick = work(async () => {state = await cloudState();renderAll();notify("Loaded the latest saved cloud inventory.");});
+$("logout").onclick = work(async () => {
+ resultOrThrow(await cloud.auth.signOut({scope:"local"}));
+ location.reload();
+});
+$("migrateLocal").onclick = work(async () => {
+ const previous = await readState();
+ if (!confirm("Merge " + previous.items.length + " previous browser records into this signed-in eBay inventory? Matching records will be replaced. Download a current backup first if needed.")) return;
+ await mergeItems(validateBackup({app:APP,version:1,items:previous.items}));
+ $("migrateLocal").hidden = true;
+ notify("Previous browser inventory copied to your cloud account, including photos.");
+});
 start().catch(e => {
  $("loading").textContent = e.message;
  notify(e.message, true);
