@@ -249,6 +249,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
      The count is inventory records, not total pieces.
     </p>
     <label for="labelTote">Tote to label</label><input id="labelTote" list="toteOptions" maxlength="160" placeholder="A1"><button id="toteLabel" class="secondary">Make Tote QR Label</button>
+    <div class="panel"><h3>Fill Empty Locations from SKUs</h3><p>Preview location clues such as A-13/0502 → A13. Existing locations are kept. These assignments remain not verified until you physically check them. Download a full backup before a large batch.</p><button id="skuPreview" class="primary">Preview SKU Location Suggestions</button><p id="skuSummary" class="small"></p><div id="skuCandidates" style="max-height:350px;overflow:auto"></div><div id="skuActions" hidden><button id="skuSelectAll" class="secondary">Select All</button><button id="skuSelectNone" class="secondary">Select None</button><button id="skuApply" class="primary">Save Selected Locations</button></div></div>
     <div id="locationsGrid" class="locations"></div>
    </div>
   </section>
@@ -375,7 +376,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
 
  </main>
 
- <footer>Old Carpenter eBay Inventory · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.01.4 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -399,6 +400,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
 <dialog id="editor">
  <form id="editForm">
   <h2 id="editorTitle">Item details</h2>
+  <p id="editorFeedback" class="notice" role="status" aria-live="polite" hidden></p>
 
   <div class="field-grid">
    <div class="wide">
@@ -475,7 +477,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   </p>
 
   <div class="actions">
-   <button class="primary" type="submit">Save Item</button>
+   <button id="saveItemButton" class="primary" type="submit">Save Item</button>
    <button type="button" class="secondary" data-close="editor">Cancel</button>
    <button id="itemLabel" type="button" class="secondary" hidden>QR Label (saved item)</button>
    <button id="removeItem" type="button" class="danger" hidden>Remove Record</button>
@@ -3026,17 +3028,22 @@ function work(fn) {
   if (locked) return;
 
   locked = true;
+  const savingItem = args[0]?.target?.id === "editForm";
+  if (savingItem) { $("saveItemButton").textContent="Saving…"; editorMessage("Saving your item to your account…"); }
   document.body.classList.add("busy");
 
   try {
    await fn(...args);
   } catch (e) {
    notify(e.message || "The operation failed. Nothing was intentionally removed.", true);
-   if ($("editor").open || $("checker").open || $("merger").open) {
+   if ($("editor").open) {
+    editorMessage(/inventory changed|another device|revision/i.test(e.message || "") ? "Not saved: newer inventory changes exist. Your entries are still here. Note your changes, tap Cancel, then Refresh at the top of the app. Reopen this item and enter the changes again. This protects newer saved records." : "Not saved: " + (e.message || "Saving failed. Try again."),true);
+   } else if ($("checker").open || $("merger").open) {
     alert(e.message || "The operation failed.");
    }
   } finally {
    locked = false;
+   if (savingItem) $("saveItemButton").textContent="Save Item";
    document.body.classList.remove("busy");
   }
  };
@@ -3406,6 +3413,7 @@ function openEditor(id = null, prefill = {}) {
  editingId = id;
  editPhotos = [...x.photos];
  $("editForm").reset();
+ $("editorFeedback").hidden = true;
 
  for (const k of ["title", "ebayId", "sku", "status", "price",
                   "listingQty", "location", "notes"]) {
@@ -4051,7 +4059,12 @@ function makeLabel(item, tote) {
  labelCanvas=canvas;labelFilename="Ebay_"+(item?"Item_":"Tote_")+value.replace(/[^a-z0-9_-]/gi,"_");
  $("labelPreview").src=canvas.toDataURL("image/png");$("labelDialog").showModal();
 }
-$("itemLabel").onclick=work(()=>makeLabel(state.items.find(x=>x.id===editingId),""));
+$("itemLabel").onclick=work(()=>{
+ const x=state.items.find(x=>x.id===editingId);
+ if (!x) throw Error("Save this item before making its label.");
+ if (editorHasChanges(x)) throw Error("Your item has unsaved changes. Tap Save Item, then reopen it and make the QR label so it uses the updated details.");
+ makeLabel(x,"");
+});
 $("toteLabel").onclick=work(()=>makeLabel(null,$("labelTote").value));
 $("labelPng").onclick=work(async()=>{
  if(!labelCanvas) return;
@@ -4133,6 +4146,57 @@ $("toteSearch").oninput=()=>{toteLimit=40;renderTotePage();};
 $("toteVerification").onchange=()=>{toteLimit=40;renderTotePage();};
 $("toteMore").onclick=()=>{toteLimit+=40;renderTotePage();};
 $("pageToteLabel").onclick=work(()=>makeLabel(null,selectedTote));
+
+
+function editorMessage(message,bad=false) {
+ const el=$("editorFeedback");el.textContent=message;el.className=bad?"notice error":"notice";el.hidden=false;
+ el.scrollIntoView?.({block:"nearest",behavior:"smooth"});
+}
+function editorHasChanges(x) {
+ return ["title","ebayId","sku","status","price","listingQty","location","notes"].some(k=>$("f_"+k).value!==String(x[k]??"")) || JSON.stringify(editPhotos)!==JSON.stringify(x.photos);
+}
+function suggestedSkuLocation(sku) {
+ const value=String(sku||"").trim();
+ // Only known tote numbers and explicit cabinet prefixes with a numeric item suffix.
+ const tote=value.match(/^A\s*-?\s*(0?[1-9]|1[0-6])\s*[/\-]\s*\d+$/i);
+ if(tote) return "A"+Number(tote[1]);
+ const cabinet=value.match(/^(first|second|third)\s+cabinet\s*[-/]\s*\d+$/i);
+ if(cabinet) return cabinet[1][0].toUpperCase()+cabinet[1].slice(1).toLowerCase()+" cabinet";
+ return "";
+}
+let skuSuggestions=[];
+$("skuPreview").onclick=()=>{
+ if(locked)return;
+ skuSuggestions=state.items.filter(x=>!x.location && !x.checkedAt).map(x=>({id:x.id,sku:x.sku,title:x.title,location:suggestedSkuLocation(x.sku)})).filter(x=>x.location);
+ $("skuSummary").textContent=skuSuggestions.length+" suggested assignments. Check only the locations you want to save. Unrecognized SKUs and records with existing locations or physical checks are left alone.";
+ $("skuCandidates").innerHTML=skuSuggestions.map(x=>'<label style="font-weight:normal;border-bottom:1px solid #ddd;padding:10px"><input type="checkbox" data-sku-id="'+esc(x.id)+'" style="width:auto"> <strong>'+esc(x.location)+'</strong> ← '+esc(x.sku)+'<br>'+esc(x.title)+'</label>').join("");
+ $("skuActions").hidden=!skuSuggestions.length;
+};
+$("skuSelectAll").onclick=()=>{if(!locked)$("skuCandidates").querySelectorAll("input").forEach(x=>x.checked=true);};
+$("skuSelectNone").onclick=()=>{if(!locked)$("skuCandidates").querySelectorAll("input").forEach(x=>x.checked=false);};
+function applySkuLocations(items,suggestions,ids) {
+ let count=0;
+ const proposed=new Map(suggestions.filter(x=>ids.has(x.id)).map(x=>[x.id,x]));
+ const updated=items.map(x=>{
+  const p=proposed.get(x.id);
+  if(!p)return x;
+  if(x.location || x.checkedAt || x.sku!==p.sku || suggestedSkuLocation(x.sku)!==p.location) throw Error("A suggested record changed. Preview suggestions again before saving.");
+  count++;
+  return normalizeItem({...x,location:p.location,checkedAt:"",updatedAt:stamp()});
+ });
+ if(count!==ids.size)throw Error("A selected record no longer exists. Preview suggestions again.");
+ return {items:updated,count};
+}
+$("skuApply").onclick=work(async()=>{
+ const ids=new Set(Array.from($("skuCandidates").querySelectorAll("input:checked"),x=>x.dataset.skuId));
+ if(!ids.size)throw Error("Select at least one suggested location first.");
+ if(!confirm("Save "+ids.size+" selected locations inferred from SKUs? They remain not verified. Existing locations will be kept."))return;
+ const next=copy(state),result=applySkuLocations(next.items,skuSuggestions,ids);next.items=result.items;
+ await commit(next);
+ skuSuggestions=[];$("skuCandidates").innerHTML="";$("skuActions").hidden=true;
+ $("skuSummary").textContent=result.count+" locations saved. They are not verified until physically checked.";
+ notify(result.count+" SKU locations saved to your account. No eBay listings were changed.");
+});
 
 async function start() {
  if (/\/(electronics-inventory|old-carpenters-notepad)(\/|$)/i.test(location.pathname)) {
