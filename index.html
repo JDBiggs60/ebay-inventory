@@ -99,6 +99,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
  dialog{padding:18px}
 }
 .location-confirmed{display:inline-block;background:#dff3e4;color:#15562a;padding:5px 9px;border-radius:8px;font-size:14px;font-weight:bold}.location-unverified{display:inline-block;background:#fff0d2;color:#744800;padding:5px 9px;border-radius:8px;font-size:14px;font-weight:bold}
+.inventory-filters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:18px 0}.inventory-filters input,.inventory-filters select{width:100%;min-width:0}.inventory-filters label{font-size:16px;margin-top:0}.inventory-filters .filter-search{grid-column:1/-1}@media(max-width:600px){.inventory-filters{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -217,23 +218,18 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
     <h2>My Inventory</h2>
     <button id="newItem" class="primary">＋ Add Item</button>
 
-    <div class="searchbar">
-     <input id="search" type="search" aria-label="Search inventory"
-      placeholder="Search title, eBay number, SKU, tote, notes…">
-
-     <select id="statusFilter" aria-label="Filter saved listing status">
-      <option value="">All saved statuses</option>
-      <option>Unknown</option>
-      <option>Active</option>
-      <option>Sold</option>
-      <option>Ended</option>
-      <option>Not listed</option>
-     </select>
-
-     <select id="locationFilter" aria-label="Filter location verification"><option value="">All location checks</option><option value="confirmed">Location confirmed</option><option value="unverified">Location not verified</option></select>
-     <input id="toteFilter" list="toteOptions" aria-label="Filter location"
-      placeholder="All totes / locations">
+    <p class="small">These boxes search your inventory. Use <strong>View / Edit</strong> to save an item’s location.</p>
+    <div class="inventory-filters">
+     <div class="filter-search"><label for="search">Search item name, SKU, or eBay number</label>
+      <input id="search" type="search" placeholder="Example: 0502 or salt shakers"></div>
+     <div><label for="statusFilter">Filter by saved listing status</label>
+      <select id="statusFilter"><option value="">All saved statuses</option><option>Unknown</option><option>Active</option><option>Sold</option><option>Ended</option><option>Not listed</option></select></div>
+     <div><label for="locationFilter">Filter by location verification</label>
+      <select id="locationFilter"><option value="">All location checks</option><option value="confirmed">Location confirmed</option><option value="unverified">Location not verified</option></select></div>
+     <div><label for="toteFilter">Filter by tote / location</label>
+      <input id="toteFilter" list="toteOptions" placeholder="Leave blank to search every location"></div>
     </div>
+    <button id="clearFilters" type="button" class="secondary">Clear Filters / Show All Items</button>
 
     <p id="inventoryCount" class="small"></p>
     <p class="small">
@@ -3311,7 +3307,7 @@ function renderInventory() {
 
  const page = rows.slice(0, 100);
  $("inventoryCards").innerHTML = page.map(x => card(x)).join("") ||
-  '<p class="empty">No records match. Add an item or import a listing report.</p>';
+  '<p class="empty">No records match these search settings. Tap Clear Filters / Show All Items above, then search by item name or SKU. An item with no saved location will not appear when a tote filter is selected.</p>';
 
  if (rows.length > 100) {
   $("inventoryCards").insertAdjacentHTML("beforeend",
@@ -3964,6 +3960,11 @@ $("restoreConfirm").onclick = work(async () => {
 });
 
 $("csvExport").onclick = exportCsv;
+$("clearFilters").onclick = () => {
+ if (locked) return;
+ for (const id of ["search","statusFilter","locationFilter","toteFilter"]) $(id).value = "";
+ renderInventory();
+};
 $("search").oninput = renderInventory;
 $("statusFilter").onchange = renderInventory;
 $("locationFilter").onchange = renderInventory;
