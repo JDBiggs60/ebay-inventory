@@ -116,7 +116,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
 </head>
 <body>
 
-<header>
+<header id="appHeader">
  <small>OLD CARPENTER WORKSHOP</small>
  <h1>eBay Inventory</h1>
  <p>Find the item. Check the listing. Know the tote.</p>
@@ -124,6 +124,16 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
 
 <div id="message" role="status" aria-live="polite" hidden></div>
 <p id="loading" class="container">Opening inventory…</p>
+
+<section id="customerThanks" class="container" hidden aria-labelledby="thanksTitle">
+ <div class="panel" style="max-width:560px;margin:32px auto;text-align:center;padding:36px 22px">
+  <div role="img" aria-label="Smiling face" style="font-size:88px;line-height:1.2">😊</div>
+  <h1 id="thanksTitle" style="font-size:30px">Thank you for your order!</h1>
+  <p>We appreciate your business.</p>
+  <p><strong>Old Carpenter Workshop</strong></p>
+  <button type="button" id="ownerSignIn" class="secondary" style="font-size:14px;margin-top:24px">Owner sign-in</button>
+ </div>
+</section>
 
 <section id="signin" class="container" hidden><div class="panel">
 <h2>Sign in to eBay Inventory</h2><p>Use your Electronics Inventory email and password.</p>
@@ -360,7 +370,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <section id="privacyCheck" hidden>
    <h2>QR Label Privacy Check</h2>
    <p>An inventory QR is a link to this app, not a password. Private inventory still needs your signed-in account and database access rules. Anyone can read the printed title, SKU, tote and item number on a label.</p>
-   <ol><li>Make an inventory label for a test item.</li><li>Scan it using a different phone that is signed out, or copy its link into a private browser window.</li><li>Confirm that the sign-in screen appears and no private records or photos are visible.</li><li>For a label that may ship to a buyer, choose <strong>Public eBay listing</strong> or <strong>Text only</strong> when making it.</li></ol>
+   <ol><li>Make an inventory label for a test item.</li><li>Scan it using a different phone that is signed out, or copy its link into a private browser window.</li><li>Confirm that the smiley-face thank-you page appears and no private records or photos are visible. The small Owner sign-in button should open the login form.</li><li>For a label that may ship to a buyer, choose <strong>Public eBay listing</strong> or <strong>Text only</strong> when making it.</li></ol>
    <p>A QR link cannot grant access by itself. This checklist is a manual test, not proof that database permissions have been audited.</p>
   </section>
   <section id="backup" hidden>
@@ -403,7 +413,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
 
  </main>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.04.1 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.04.2 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -4095,8 +4105,21 @@ function labelUrl(key, value) {
  url.hash = new URLSearchParams({[key]:value}).toString();
  return url.href;
 }
+function showSignedOutPage(ownerLogin = false) {
+ const params = new URLSearchParams(location.hash.slice(1));
+ const customer = !ownerLogin && (params.has("item") || params.has("tote"));
+ $("loading").hidden = true;
+ $("application").hidden = true;
+ $("customerThanks").hidden = !customer;
+ $("signin").hidden = customer;
+ $("appHeader").hidden = customer;
+}
+$("ownerSignIn").onclick = () => {
+ showSignedOutPage(true);
+ $("email").focus();
+};
 function openQrDestination() {
- if (!accountId) return;
+ if (!accountId) { showSignedOutPage(); return; }
  const params = new URLSearchParams(location.hash.slice(1));
  if (params.has("item")) {
   const id = params.get("item");
@@ -4348,10 +4371,12 @@ async function start() {
  if (!window.supabase) throw Error("Connection library did not load. Reload with an Internet connection.");
  const session = resultOrThrow(await cloud.auth.getSession());
  if (!session.session) {
-  $("loading").hidden = true;
-  $("signin").hidden = false;
+  showSignedOutPage();
   return;
  }
+ $("customerThanks").hidden = true;
+ $("signin").hidden = true;
+ $("appHeader").hidden = false;
  accountId = session.session.user.id;
  await openDatabase();
  const previous = await readState();
