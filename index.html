@@ -432,7 +432,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
 
  </main>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.05.3 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.05.4 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -3329,7 +3329,7 @@ function card(x, verify = false) {
   '<div class="item-body">' + badge +
   '<h3>' + esc(x.title) + '</h3>' +
   '<strong>' + money(x.price) + '</strong>' +
-  '<p>📍 ' + esc(x.location || "Location missing") + '</p>' + locationBadge(x) +
+  '<p>📍 ' + esc(x.location || (suggestedSkuLocation(x.sku) ? "Suggested from SKU: " + suggestedSkuLocation(x.sku) : "Location missing")) + '</p>' + locationBadge(x) +
   (locationConfirmed(x) ? '<p class="small">Location checked: ' + esc(when(x.checkedAt)) + '</p>' : '') +
   '<p class="small">eBay # ' + esc(x.ebayId || "Not linked") +
   '<br>SKU: ' + esc(x.sku || "Not recorded") +
@@ -3482,8 +3482,8 @@ function renderLocations() {
  $("locationsGrid").innerHTML = names.map(n =>
   '<button class="tote secondary" data-tote="' + esc(n) + '">' +
   '<strong>🗄️ ' + esc(n) + '</strong><small>' +
-  state.items.filter(x => x.location.toLowerCase() === n.toLowerCase()).length +
-  ' records · ' + state.items.filter(x => x.location.toLowerCase() === n.toLowerCase() && locationConfirmed(x)).length + ' confirmed</small></button>'
+  toteItems(n).length +
+  ' records · ' + toteItems(n).filter(locationConfirmed).length + ' confirmed</small></button>'
  ).join("");
 
  $("locationsGrid").insertAdjacentHTML("beforeend", '<button class="tote secondary" id="unassignedTote"><strong>Location missing</strong><small>' + state.items.filter(x=>!x.location).length + ' records</small></button>');
@@ -3633,7 +3633,7 @@ function openCheck(id) {
  $("checkForm").reset();
  $("checkId").value = id;
  $("checkTitle").textContent = x.title;
- $("checkLocation").value = (currentView === "verify" ? $("verifyTote").value.trim() : "") || x.location;
+ $("checkLocation").value = (currentView === "verify" ? $("verifyTote").value.trim() : (currentView === "totePage" ? selectedTote : "")) || x.location;
  $("checkQty").value = "";
 
  $("checkHint").textContent = "Saved status: " + x.status +
@@ -4313,7 +4313,11 @@ $("labelPdf").onclick=work(()=>{if(labelCanvas)download(labelFilename+".pdf",lab
 
 let selectedTote = "", toteLimit = 40, movingItemId = null;
 function toteItems(name) {
- return state.items.filter(x => x.location.toLowerCase() === name.toLowerCase());
+ const wanted = name.toLowerCase();
+ return state.items.filter(x =>
+  x.location.toLowerCase() === wanted ||
+  (!x.location && suggestedSkuLocation(x.sku).toLowerCase() === wanted)
+ );
 }
 function openTote(name) {
  if (locked) return;
@@ -4328,7 +4332,8 @@ function renderTotePage() {
  let rows = searchItems($("toteSearch").value, items);
  if ($("toteVerification").value) rows = rows.filter(x => locationConfirmed(x) === ($("toteVerification").value === "confirmed"));
  rows.sort((a,b)=>a.title.localeCompare(b.title,undefined,{numeric:true}));
- $("toteSummary").textContent = items.length + " records · " + confirmed + " confirmed · " + (items.length-confirmed) + " not verified. Showing " + Math.min(toteLimit,rows.length) + " of " + rows.length + " matching records.";
+ const suggested = items.filter(x => !x.location && suggestedSkuLocation(x.sku).toLowerCase() === selectedTote.toLowerCase()).length;
+ $("toteSummary").textContent = items.length + " records · " + confirmed + " confirmed · " + (items.length-confirmed) + " not verified" + (suggested ? " · " + suggested + " suggested from eBay SKUs" : "") + ". Showing " + Math.min(toteLimit,rows.length) + " of " + rows.length + " matching records.";
  $("pageToteLabel").hidden = !selectedTote;
  $("toteCards").innerHTML = rows.slice(0,toteLimit).map(x=>card(x)).join("") || '<p class="empty">No items match in this location.</p>';
  $("toteMore").hidden = rows.length <= toteLimit;
