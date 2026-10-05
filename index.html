@@ -375,6 +375,9 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
      Unchecked records are not automatically marked missing.
      Physical checks older than 90 days are flagged for another count.
     </p>
+    <label for="problemSearch">Search inventory problems</label>
+    <input id="problemSearch" type="search" placeholder="Item name, SKU, eBay number, or tote/location">
+    <p id="problemSearchCount" class="small"></p>
    </div>
    <div id="problemsList"></div>
   </section>
@@ -432,7 +435,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
 
  </main>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.05.5 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.05.6 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -3492,15 +3495,22 @@ function renderLocations() {
 }
 
 function renderProblems() {
- const rows = state.items.filter(x => issues(x).length);
+ const problemRows = state.items.filter(x => issues(x).length);
+ const query = $("problemSearch").value.trim();
+ const rows = query ? searchItems(query, problemRows) : problemRows;
+
+ $("problemSearchCount").textContent = query ?
+  rows.length + " matching problem records out of " + problemRows.length + "." :
+  problemRows.length + " records need review.";
 
  $("problemsList").innerHTML = rows.map(x =>
   '<article class="problem"><h3>' + esc(x.title) +
   '</h3><p>' + issues(x).map(esc).join(" · ") +
   '</p><button class="primary" data-edit="' + esc(x.id) +
   '">Review record</button></article>'
- ).join("") ||
-  '<p class="empty">No issues found in saved records. This is not a live eBay audit.</p>';
+ ).join("") || (query ?
+  '<p class="empty">No inventory problems match that search. Try the item name, SKU, eBay number, or tote/location.</p>' :
+  '<p class="empty">No issues found in saved records. This is not a live eBay audit.</p>');
 
  bindCards($("problemsList"));
 }
@@ -4181,6 +4191,7 @@ $("confirmEditorLocation").onclick = () => {
 };
 $("toteFilter").oninput = renderInventory;
 $("matchSearch").oninput = () => { photoMatchIds = []; renderMatches(); };
+$("problemSearch").oninput = renderProblems;
 
 document.querySelectorAll("[data-view]").forEach(b => {
  b.onclick = () => {
