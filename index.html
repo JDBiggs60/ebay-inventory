@@ -317,7 +317,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
     <pre id="livePreview">The review will show matches, new listings, changed listing details, and saved records absent from the active list.</pre>
     <div id="livePhotoPreview" class="grid"></div>
     <button id="applyEbayLive" class="primary" disabled>Apply Reviewed Active Listings to App</button>
-    <p class="small">Applying updates titles, prices, active status, quantities and available eBay SKUs. eBay thumbnails appear during the live review. Tote locations, physical checks, notes, your own saved photos and saved SKUs missing from eBay are preserved. Records absent from the active list are kept unchanged.</p>
+    <p class="small">Applying updates titles, prices, active status, quantities, available eBay SKUs and eBay listing thumbnails. Tote locations, physical checks, notes, your own saved photos and saved SKUs missing from eBay are preserved. Records absent from the active list are kept unchanged.</p>
    </div>
 
    <div class="panel">
@@ -425,7 +425,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
 
  </main>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.05.1 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.05.2 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -3063,6 +3063,7 @@ let verifyPhoto = "";
 let pendingImport = null;
 let pendingLiveReview = null;
 let liveListingById = new Map();
+let savedEbayImageById = new Map();
 let locked = false;
 let currentView = "home";
 
@@ -3169,8 +3170,13 @@ async function cloudState() {
   const before = resultOrThrow(await cloud.from("ebay_inventory_state").select("*").eq("user_id", accountId).maybeSingle());
   const items = await rowsOf("ebay_inventory_items", "id");
   const photos = await rowsOf("ebay_inventory_item_photos", "item_id");
+  const ebayImages = await rowsOf("ebay_inventory_images", "ebay_id");
   const after = resultOrThrow(await cloud.from("ebay_inventory_state").select("*").eq("user_id", accountId).maybeSingle());
   if ((before?.revision || 0) !== (after?.revision || 0)) continue;
+  if (ebayImages.some(x => !/^\d{9,15}$/.test(x.ebay_id || "") || !/^https:\/\/i\.ebayimg\.com\//.test(x.image_url || ""))) {
+   throw Error("A saved eBay picture address is invalid.");
+  }
+  savedEbayImageById = new Map(ebayImages.map(x => [x.ebay_id, x.image_url]));
   const mapped = items.map(x => ({id:x.id,title:x.title,ebayId:x.ebay_id,sku:x.sku,status:x.status,price:x.price,
    listingQty:x.listing_qty,physicalQty:x.physical_qty,location:x.location,notes:x.notes,checkedAt:x.checked_at || "",
    statusAt:x.status_at || "",source:x.source,updatedAt:x.updated_at,photos:[]}));
@@ -3296,7 +3302,7 @@ function issues(x) {
 
 function card(x, verify = false) {
  const live = x.ebayId ? liveListingById.get(x.ebayId) : null;
- const photo = x.photos[0] || live?.gallery_url || "";
+ const photo = x.photos[0] || live?.gallery_url || savedEbayImageById.get(x.ebayId) || "";
 
  const badge = '<span class="badge ' +
   x.status.toLowerCase().replace(/\s/g, "") +
@@ -3351,7 +3357,7 @@ function bindCards(el) {
 
 function renderInventoryReport() {
  const counts = STATUSES.map(status => '<tr><td>' + esc(status) + '</td><td>' + state.items.filter(x => x.status === status).length + '</td></tr>').join('');
- $('inventoryReportBody').innerHTML = '<table><thead><tr><th>Saved status</th><th>Records</th></tr></thead><tbody>' + counts + '</tbody></table><p>Missing location: ' + state.items.filter(x => !x.location).length + ' · Location confirmed: ' + state.items.filter(locationConfirmed).length + ' · With photos: ' + state.items.filter(x => x.photos.length).length + '</p><p>Last listing report: ' + esc(state.importedAt ? when(state.importedAt) : 'None imported') + '.</p>';
+ $('inventoryReportBody').innerHTML = '<table><thead><tr><th>Saved status</th><th>Records</th></tr></thead><tbody>' + counts + '</tbody></table><p>Missing location: ' + state.items.filter(x => !x.location).length + ' · Location confirmed: ' + state.items.filter(locationConfirmed).length + ' · With photos: ' + state.items.filter(x => x.photos.length || savedEbayImageById.has(x.ebayId)).length + '</p><p>Last listing report: ' + esc(state.importedAt ? when(state.importedAt) : 'None imported') + '.</p>';
 }
 $('summaryCsv').onclick = () => $('csvExport').click();
 function renderPacking() {
@@ -3367,7 +3373,8 @@ function renderPacking() {
   packingId = x.id; $("packForm").reset();
   $("packTitle").textContent = x.title;
   $("packDetails").textContent = "eBay # " + (x.ebayId || "Missing: add the eBay number first") + " · SKU " + (x.sku || "Unknown") + " · Location " + (x.location || "Missing") + " · Saved status " + x.status;
-  $("packPhotos").innerHTML = x.photos.map(p => '<img src="' + p + '" alt="Saved item photo">').join("");
+  const packPictures = x.photos.length ? x.photos : (savedEbayImageById.get(x.ebayId) ? [savedEbayImageById.get(x.ebayId)] : []);
+  $("packPhotos").innerHTML = packPictures.map(p => '<img src="' + esc(p) + '" alt="Item photo">').join("");
   $("packDialog").showModal();
  });
 }
@@ -4460,7 +4467,7 @@ $("cancelEbayReview").onclick = () => {
 $("applyEbayLive").onclick = work(async () => {
  const review = pendingLiveReview;
  if (!review) throw Error("Run the live refresh again before applying changes.");
- if (!confirm("Apply " + review.listings.length + " reviewed active listings to this app? " + review.changed.length + " matched records will be updated and " + review.added.length + " new records will be added. Tote locations, physical checks, notes and saved photos will be preserved. " + review.missing.length + " records absent from the active list will remain unchanged.")) return;
+ if (!confirm("Apply " + review.listings.length + " reviewed active listings and their eBay thumbnails to this app? " + review.changed.length + " matched records will be updated and " + review.added.length + " new records will be added. Tote locations, physical checks, notes and your own saved photos will be preserved. " + review.missing.length + " records absent from the active list will remain unchanged.")) return;
  const next = copy(state), time = stamp();
  const byEbay = new Map(next.items.filter(x => x.ebayId).map(x => [x.ebayId,x]));
  for (const live of review.listings) {
@@ -4474,10 +4481,15 @@ $("applyEbayLive").onclick = work(async () => {
   }
  }
  next.importedAt = time;
+ const imageRows = review.listings.filter(x => x.gallery_url).map(x => ({user_id:accountId,ebay_id:x.item_id,image_url:x.gallery_url,updated_at:time}));
+ for (let start = 0; start < imageRows.length; start += 200) {
+  resultOrThrow(await cloud.from("ebay_inventory_images").upsert(imageRows.slice(start,start + 200), {onConflict:"user_id,ebay_id"}));
+ }
+ for (const x of imageRows) savedEbayImageById.set(x.ebay_id,x.image_url);
  await commit(next);
  $("applyEbayLive").disabled = true;
  $("liveProgress").textContent = "Applied " + review.listings.length + " active listings to the app at " + when(time) + ". " + review.missing.length + " absent records were kept unchanged.";
- notify("Live active listings saved to the app. No eBay listing was changed.");
+ notify("Live active listings and eBay thumbnails saved to the app. No eBay listing was changed.");
  pendingLiveReview = null;
 });
 
