@@ -144,7 +144,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
 <div id="application" hidden>
  <div class="toolbar">
   <button id="back" class="secondary" data-view="home" hidden>← Home</button>
-  <span class="small">Cloud inventory · eBay listings not connected live</span><button id="reloadCloud" class="secondary">Refresh</button><button id="migrateLocal" class="secondary" hidden>Copy previous browser inventory</button><button id="logout" class="secondary">Sign out</button>
+  <span class="small">Cloud inventory · read-only live eBay connection</span><button id="reloadCloud" class="secondary">Refresh</button><button id="migrateLocal" class="secondary" hidden>Copy previous browser inventory</button><button id="logout" class="secondary">Sign out</button>
  </div>
 
  <main class="container">
@@ -181,7 +181,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
     <button class="home-card orange" data-view="connection">
      <span class="icon">🔄</span>
      <strong>eBay Connection</strong>
-     <small>Import a listing report while we prepare the live connection.</small>
+     <small>Refresh current eBay listings or import a saved report.</small>
     </button>
 
     <button class="home-card red" data-view="problems">
@@ -297,7 +297,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
     <p id="ebayConnectionMessage">Connect the willowchairman seller account to verify it belongs to this inventory login.</p>
     <button type="button" id="connectEbay">Connect my eBay account</button>
     <button type="button" class="secondary" id="checkEbayConnection">Check connection</button>
-    <p class="small">Seller sign-in is ready. Automatic listing updates are a separate next step. Sign-in does not change your listings or tote assignments.</p>
+    <p class="small">Seller sign-in and read-only active-list access are ready. Refreshing cannot edit your eBay listings or tote assignments.</p>
     <p class="small"><a href="privacy.html" target="_blank" rel="noopener noreferrer">Privacy policy</a></p>
     <p class="small">
      Imported reports do not change your eBay listings.
@@ -306,6 +306,18 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
     </p>
     <a class="button secondary" href="https://www.ebay.com/sh/ovw"
      target="_blank" rel="noopener noreferrer">Open Seller Hub</a>
+   </div>
+
+   <div class="panel">
+    <h2>Refresh from eBay</h2>
+    <p>Read all current active listings directly from willowchairman. This first shows a review and changes nothing saved in the app.</p>
+    <button id="refreshEbayLive" class="primary">Refresh Active Listings from eBay</button>
+    <button id="cancelEbayReview" class="secondary" hidden>Clear Review</button>
+    <p id="liveProgress" class="small">No live refresh has been run in this browser session.</p>
+    <pre id="livePreview">The review will show matches, new listings, changed listing details, and saved records absent from the active list.</pre>
+    <div id="livePhotoPreview" class="grid"></div>
+    <button id="applyEbayLive" class="primary" disabled>Apply Reviewed Active Listings to App</button>
+    <p class="small">Applying updates titles, prices, active status, quantities and available eBay SKUs. eBay thumbnails appear during the live review. Tote locations, physical checks, notes, your own saved photos and saved SKUs missing from eBay are preserved. Records absent from the active list are kept unchanged.</p>
    </div>
 
    <div class="panel">
@@ -413,7 +425,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
 
  </main>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.04.2 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.05.1 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -3049,6 +3061,8 @@ let editingId = null;
 let editPhotos = [];
 let verifyPhoto = "";
 let pendingImport = null;
+let pendingLiveReview = null;
+let liveListingById = new Map();
 let locked = false;
 let currentView = "home";
 
@@ -3281,7 +3295,8 @@ function issues(x) {
 }
 
 function card(x, verify = false) {
- const photo = x.photos[0];
+ const live = x.ebayId ? liveListingById.get(x.ebayId) : null;
+ const photo = x.photos[0] || live?.gallery_url || "";
 
  const badge = '<span class="badge ' +
   x.status.toLowerCase().replace(/\s/g, "") +
@@ -3293,7 +3308,7 @@ function card(x, verify = false) {
 
  return '<article class="item">' +
   (photo ?
-   '<img class="item-photo" src="' + photo + '" alt="Saved photo of ' +
+   '<img class="item-photo" src="' + esc(photo) + '" alt="Photo of ' +
     esc(x.title) + '" loading="lazy">' :
    '<div class="placeholder">📦<small>No saved photo</small></div>') +
   '<div class="item-body">' + badge +
@@ -3368,7 +3383,7 @@ $("packForm").onsubmit = work(async e => {
  $("packDialog").close(); notify("Packing check saved in item notes. Complete shipping in Seller Hub.");
 });
 function renderAll() {
- $("snapshotSummary").textContent = "Last listing report: " + (state.importedAt ? when(state.importedAt) : "None imported") + ". Seller sign-in is separate; live listing updates are not enabled.";
+ $("snapshotSummary").textContent = liveListingById.size ? "Live eBay review loaded: " + liveListingById.size + " active listings. Last saved listing update: " + (state.importedAt ? when(state.importedAt) : "None") + "." : "Last listing update: " + (state.importedAt ? when(state.importedAt) : "None imported") + ". Use eBay Connection to run a read-only live refresh.";
  if (currentView === "packing") renderPacking();
  if (currentView === "inventoryReport") renderInventoryReport();
  $("recordCount").textContent = state.items.length;
@@ -4321,6 +4336,151 @@ $("skuApply").onclick=work(async()=>{
 });
 
 
+
+// Read-only live eBay listing review. This endpoint has no eBay editing operations.
+async function ebayActivePage(page) {
+ const result = await cloud.auth.getSession();
+ if (result.error || !result.data.session) throw Error("Sign in to this inventory app first.");
+ const response = await fetch("https://tgdyvyyggybatctevywf.supabase.co/functions/v1/ebay-active-listings", {
+  method: "POST",
+  headers: {"Content-Type":"application/json", Authorization:"Bearer " + result.data.session.access_token},
+  body: JSON.stringify({page}),
+  signal: AbortSignal.timeout(55000)
+ });
+ const data = await response.json().catch(() => ({error:"The active-list server did not return usable data."}));
+ if (!response.ok || !data.success) throw Error(data.error || "eBay did not return this active-list page.");
+ if (data.read_only !== true || data.api_call !== "GetMyeBaySelling" || data.seller !== "willowchairman" ||
+     data.page_requested !== page || data.inventory_records_written !== 0 || data.listing_requests_sent !== 1 ||
+     !Array.isArray(data.listings)) throw Error("The active-list response failed its safety checks.");
+ return data;
+}
+function validLiveListing(x) {
+ return x && typeof x === "object" && /^\d{9,15}$/.test(x.item_id) &&
+  typeof x.title === "string" && x.title.trim() && x.title.length <= 500 &&
+  typeof x.sku === "string" && x.sku.length <= 160 && x.status === "Active" &&
+  (x.price === null || (Number.isFinite(x.price) && x.price >= 0 && x.price <= 99999999)) &&
+  (x.quantity_available === null || (Number.isInteger(x.quantity_available) && x.quantity_available >= 0 && x.quantity_available <= 99999999)) &&
+  typeof x.gallery_url === "string" && (!x.gallery_url || /^https:\/\/i\.ebayimg\.com\//.test(x.gallery_url)) &&
+  typeof x.listing_url === "string" && /^https:\/\/www\.ebay\.com\/itm\//.test(x.listing_url);
+}
+function liveDifference(saved, live) {
+ return saved.title !== live.title.trim() || (live.sku.trim() && saved.sku !== live.sku.trim()) || saved.status !== "Active" ||
+  saved.price !== live.price || saved.listingQty !== live.quantity_available;
+}
+function makeLiveReview(listings, fetchedAt) {
+ const liveIds = new Set(listings.map(x => x.item_id));
+ const savedByEbay = new Map();
+ const duplicateSaved = new Set();
+ for (const item of state.items) if (item.ebayId) {
+  if (savedByEbay.has(item.ebayId)) duplicateSaved.add(item.ebayId);
+  else savedByEbay.set(item.ebayId, item);
+ }
+ if (duplicateSaved.size) throw Error("Saved inventory contains repeated eBay item numbers. Resolve those records before live refresh: " + Array.from(duplicateSaved).slice(0,5).join(", "));
+ const matched = [], changed = [], added = [];
+ for (const live of listings) {
+  const saved = savedByEbay.get(live.item_id);
+  if (!saved) added.push(live);
+  else { matched.push({saved,live}); if (liveDifference(saved,live)) changed.push({saved,live}); }
+ }
+ const missing = state.items.filter(x => x.ebayId && !liveIds.has(x.ebayId));
+ return {listings, matched, changed, added, missing, fetchedAt};
+}
+function liveReviewText(review) {
+ const lines = [
+  "READ-ONLY EBAY REVIEW",
+  review.listings.length + " current active listings received",
+  review.matched.length + " matched saved records",
+  review.changed.length + " matched records with title, SKU, price, quantity, or status changes",
+  review.added.length + " new active listings not yet saved in the app",
+  review.missing.length + " saved linked records absent from the active list (they will remain unchanged)",
+  "",
+  "Examples of changes:",
+  ...review.changed.slice(0,8).map(x => x.live.item_id + " · " + x.live.title),
+  "",
+  "Examples of new listings:",
+  ...review.added.slice(0,8).map(x => x.item_id + " · " + x.title),
+  "",
+  "Examples absent from active listings — review only:",
+  ...review.missing.slice(0,8).map(x => x.ebayId + " · " + x.title)
+ ];
+ return lines.join("\n");
+}
+function showLivePhotos(listings) {
+ $("livePhotoPreview").innerHTML = listings.slice(0,12).map(x => '<article class="item">' +
+  (x.gallery_url ? '<img class="item-photo" src="' + esc(x.gallery_url) + '" alt="eBay thumbnail for ' + esc(x.title) + '" loading="lazy">' : '<div class="placeholder">📦<small>No eBay thumbnail</small></div>') +
+  '<div class="item-body"><span class="badge active">Live: Active</span><h3>' + esc(x.title) + '</h3><strong>' + money(x.price) + '</strong><p class="small">eBay # ' + esc(x.item_id) + '<br>SKU: ' + esc(x.sku || "Not recorded") + '<br>Available: ' + (x.quantity_available ?? "Unknown") + '</p></div></article>').join("");
+}
+$("refreshEbayLive").onclick = work(async () => {
+ pendingLiveReview = null;
+ liveListingById = new Map();
+ $("applyEbayLive").disabled = true;
+ $("cancelEbayReview").hidden = true;
+ $("livePhotoPreview").innerHTML = "";
+ $("livePreview").textContent = "Reading active listing page 1…";
+ const first = await ebayActivePage(1);
+ const totalPages = first.total_pages_reported;
+ const totalEntries = first.total_active_entries_reported;
+ if (!Number.isInteger(totalPages) || totalPages < 1 || totalPages > 1000 ||
+     !Number.isInteger(totalEntries) || totalEntries < 0 || totalEntries > 20000) throw Error("eBay returned an invalid active-list total.");
+ const listings = [...first.listings];
+ for (let page = 2; page <= totalPages; page++) {
+  $("liveProgress").textContent = "Reading eBay page " + page + " of " + totalPages + "… " + listings.length + " listings received.";
+  const data = await ebayActivePage(page);
+  if (data.total_pages_reported !== totalPages || data.total_active_entries_reported !== totalEntries) throw Error("Active listings changed during refresh. Run Refresh again for a consistent review.");
+  listings.push(...data.listings);
+ }
+ if (listings.some(x => !validLiveListing(x))) throw Error("An active listing contained invalid or unexpected data. Nothing was saved.");
+ const unique = new Map();
+ for (const x of listings) {
+  if (unique.has(x.item_id)) throw Error("eBay returned a repeated item number across pages. Nothing was saved; run Refresh again.");
+  unique.set(x.item_id, x);
+ }
+ if (unique.size !== totalEntries) throw Error("eBay reported " + totalEntries + " active listings but " + unique.size + " unique listings were received. Nothing was saved; run Refresh again.");
+ liveListingById = unique;
+ pendingLiveReview = makeLiveReview(listings, stamp());
+ $("liveProgress").textContent = "Review ready: " + listings.length + " active listings read from eBay. Nothing has been saved yet.";
+ $("livePreview").textContent = liveReviewText(pendingLiveReview);
+ showLivePhotos(listings);
+ $("applyEbayLive").disabled = false;
+ $("cancelEbayReview").hidden = false;
+ renderAll();
+ notify("Live eBay review is ready. Check the summary before applying it to the app.");
+});
+$("cancelEbayReview").onclick = () => {
+ if (locked) return;
+ pendingLiveReview = null;
+ liveListingById = new Map();
+ $("applyEbayLive").disabled = true;
+ $("cancelEbayReview").hidden = true;
+ $("liveProgress").textContent = "Live review cleared. No saved inventory was changed.";
+ $("livePreview").textContent = "Run Refresh Active Listings from eBay to create another review.";
+ $("livePhotoPreview").innerHTML = "";
+ renderAll();
+};
+$("applyEbayLive").onclick = work(async () => {
+ const review = pendingLiveReview;
+ if (!review) throw Error("Run the live refresh again before applying changes.");
+ if (!confirm("Apply " + review.listings.length + " reviewed active listings to this app? " + review.changed.length + " matched records will be updated and " + review.added.length + " new records will be added. Tote locations, physical checks, notes and saved photos will be preserved. " + review.missing.length + " records absent from the active list will remain unchanged.")) return;
+ const next = copy(state), time = stamp();
+ const byEbay = new Map(next.items.filter(x => x.ebayId).map(x => [x.ebayId,x]));
+ for (const live of review.listings) {
+  const old = byEbay.get(live.item_id);
+  if (old) {
+   const ix = next.items.findIndex(x => x.id === old.id);
+   next.items[ix] = normalizeItem({...old,title:live.title.trim(),ebayId:live.item_id,sku:live.sku.trim() || old.sku,status:"Active",price:live.price,listingQty:live.quantity_available,statusAt:time,source:"Live eBay",updatedAt:time});
+  } else {
+   const added = normalizeItem({id:uid(),title:live.title.trim(),ebayId:live.item_id,sku:live.sku.trim(),status:"Active",price:live.price,listingQty:live.quantity_available,physicalQty:null,location:"",notes:"",photos:[],checkedAt:"",statusAt:time,source:"Live eBay",updatedAt:time});
+   next.items.push(added); byEbay.set(added.ebayId,added);
+  }
+ }
+ next.importedAt = time;
+ await commit(next);
+ $("applyEbayLive").disabled = true;
+ $("liveProgress").textContent = "Applied " + review.listings.length + " active listings to the app at " + when(time) + ". " + review.missing.length + " absent records were kept unchanged.";
+ notify("Live active listings saved to the app. No eBay listing was changed.");
+ pendingLiveReview = null;
+});
+
 // eBay seller OAuth. eBay client secrets and seller tokens stay on the server.
 async function ebayConnectRequest(action,extra={}) {
  const result=await cloud.auth.getSession();
@@ -4337,7 +4497,7 @@ function showEbayConnection(data){
  $("connectEbay").disabled=Boolean(data.closed);
  $("connectEbay").textContent=data.connected?"Reconnect my eBay account":"Connect my eBay account";
  $("ebayConnectionMessage").textContent=data.closed?"This seller's app data is closed following an account-deletion request.":data.connected?
- "Connected to "+data.username+". Seller identity is verified. Automatic listing updates are the next setup step.":"Connect the willowchairman seller account. Your existing inventory and totes stay in place.";
+ "Connected to "+data.username+". Seller identity is verified. Read-only active listing refresh is ready.":"Connect the willowchairman seller account. Your existing inventory and totes stay in place.";
 }
 async function checkEbayConnection(){showEbayConnection(await ebayConnectRequest("status"));}
 $("connectEbay").onclick=work(async()=>{
