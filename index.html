@@ -432,7 +432,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
 
  </main>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.05.4 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.05.5 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -3276,7 +3276,7 @@ function issues(x) {
  const a = [];
 
  const suggested = suggestedSkuLocation(x.sku);
- if (suggested && x.location && suggested.toLowerCase() !== x.location.toLowerCase()) a.push("SKU suggests " + suggested + "; saved location is " + x.location + ". Check physically; SKU may be old.");
+ if (suggested && x.location && canonicalLocation(suggested).toLowerCase() !== canonicalLocation(x.location).toLowerCase()) a.push("SKU suggests " + suggested + "; saved location is " + x.location + ". Check physically; SKU may be old.");
  if (!x.location) a.push("Location missing");
  else if (!locationConfirmed(x)) a.push("Location not verified");
  if (x.status === "Unknown") a.push("Listing status unknown");
@@ -3431,7 +3431,7 @@ function renderInventory() {
 
  if ($("toteFilter").value) {
   rows = rows.filter(x =>
-   x.location.toLowerCase() === $("toteFilter").value.toLowerCase()
+   canonicalLocation(x.location || suggestedSkuLocation(x.sku)).toLowerCase() === canonicalLocation($("toteFilter").value).toLowerCase()
   );
  }
 
@@ -3476,7 +3476,7 @@ function renderMatches() {
 function renderLocations() {
  const names = Array.from(new Set([
   ...Array.from({length: 16}, (_, i) => "A" + (i + 1)),
-  ...state.items.map(x => x.location).filter(Boolean)
+  ...state.items.map(x => canonicalLocation(x.location)).filter(Boolean)
  ])).sort((a, b) => a.localeCompare(b, undefined, {numeric: true}));
 
  $("locationsGrid").innerHTML = names.map(n =>
@@ -3550,7 +3550,7 @@ function openEditor(id = null, prefill = {}) {
 
  $("editorTitle").textContent = id ? "Item details" : "Add an inventory item";
  $("confirmEditorLocation").hidden = !id;
- $("locationSummary").innerHTML = locationBadge(x) + (suggestedSkuLocation(x.sku) && x.location && suggestedSkuLocation(x.sku).toLowerCase() !== x.location.toLowerCase() ? '<p class="notice">SKU suggests ' + esc(suggestedSkuLocation(x.sku)) + '; saved location is ' + esc(x.location) + '. Check the actual tote before changing either.</p>' : '');
+ $("locationSummary").innerHTML = locationBadge(x) + (suggestedSkuLocation(x.sku) && x.location && canonicalLocation(suggestedSkuLocation(x.sku)).toLowerCase() !== canonicalLocation(x.location).toLowerCase() ? '<p class="notice">SKU suggests ' + esc(suggestedSkuLocation(x.sku)) + '; saved location is ' + esc(x.location) + '. Check the actual tote before changing either.</p>' : '');
  $("physicalSummary").textContent = id ?
   "Physical count: " + (x.physicalQty ?? "Not checked") +
    " · Last check: " + when(x.checkedAt) :
@@ -4313,10 +4313,9 @@ $("labelPdf").onclick=work(()=>{if(labelCanvas)download(labelFilename+".pdf",lab
 
 let selectedTote = "", toteLimit = 40, movingItemId = null;
 function toteItems(name) {
- const wanted = name.toLowerCase();
+ const wanted = canonicalLocation(name).toLowerCase();
  return state.items.filter(x =>
-  x.location.toLowerCase() === wanted ||
-  (!x.location && suggestedSkuLocation(x.sku).toLowerCase() === wanted)
+  canonicalLocation(x.location || suggestedSkuLocation(x.sku)).toLowerCase() === wanted
  );
 }
 function openTote(name) {
@@ -4332,7 +4331,7 @@ function renderTotePage() {
  let rows = searchItems($("toteSearch").value, items);
  if ($("toteVerification").value) rows = rows.filter(x => locationConfirmed(x) === ($("toteVerification").value === "confirmed"));
  rows.sort((a,b)=>a.title.localeCompare(b.title,undefined,{numeric:true}));
- const suggested = items.filter(x => !x.location && suggestedSkuLocation(x.sku).toLowerCase() === selectedTote.toLowerCase()).length;
+ const suggested = items.filter(x => !x.location && canonicalLocation(suggestedSkuLocation(x.sku)).toLowerCase() === canonicalLocation(selectedTote).toLowerCase()).length;
  $("toteSummary").textContent = items.length + " records · " + confirmed + " confirmed · " + (items.length-confirmed) + " not verified" + (suggested ? " · " + suggested + " suggested from eBay SKUs" : "") + ". Showing " + Math.min(toteLimit,rows.length) + " of " + rows.length + " matching records.";
  $("pageToteLabel").hidden = !selectedTote;
  $("toteCards").innerHTML = rows.slice(0,toteLimit).map(x=>card(x)).join("") || '<p class="empty">No items match in this location.</p>';
@@ -4348,9 +4347,9 @@ function openMove(id) {
  $("moveDestination").value=""; $("moveDialog").showModal();
 }
 function moveRecord(item, destination) {
- destination=destination.trim();
+ destination=canonicalLocation(destination.trim());
  if (!destination || destination.length>160) throw Error("Enter a new tote or storage location, up to 160 characters.");
- if (destination.toLowerCase()===item.location.toLowerCase()) throw Error("This item is already in that location. Choose another tote.");
+ if (destination.toLowerCase()===canonicalLocation(item.location).toLowerCase()) throw Error("This item is already in that location. Choose another tote.");
  return normalizeItem(recordLocationChange({...item,location:destination,checkedAt:"",updatedAt:stamp()},item));
 }
 $("moveForm").onsubmit=work(async e=>{
@@ -4359,8 +4358,8 @@ $("moveForm").onsubmit=work(async e=>{
  if (!item) throw Error("This item no longer exists. Refresh your inventory.");
  let destination=$("moveDestination").value.trim();
  // Reuse the existing spelling so A1 and a1 do not create separate tote names.
- const known=[...Array.from({length:16},(_,i)=>"A"+(i+1)),...state.items.map(x=>x.location)];
- destination=known.find(n=>n.toLowerCase()===destination.toLowerCase()) || destination;
+ const known=[...Array.from({length:16},(_,i)=>"A"+(i+1)),...state.items.map(x=>canonicalLocation(x.location))];
+ destination=canonicalLocation(known.find(n=>n.toLowerCase()===canonicalLocation(destination).toLowerCase()) || destination);
  const updated=moveRecord(item,destination);
  await mergeItems([updated]);
  $("moveDialog").close(); movingItemId=null;
@@ -4379,6 +4378,16 @@ function editorMessage(message,bad=false) {
 }
 function editorHasChanges(x) {
  return ["title","ebayId","sku","status","price","listingQty","location","notes"].some(k=>$("f_"+k).value!==String(x[k]??"")) || JSON.stringify(editPhotos)!==JSON.stringify(x.photos);
+}
+function canonicalLocation(value) {
+ const text=String(value||"").trim();
+ // Treat A-13, A 13, A013 and A13 as the same tote without rewriting old records.
+ const tote=text.match(/^A\s*-?\s*0*(\d{1,2})$/i);
+ if(tote) {
+  const number=Number(tote[1]);
+  if(number>=1 && number<=16) return "A"+number;
+ }
+ return text;
 }
 function suggestedSkuLocation(sku) {
  const value=String(sku||"").trim();
