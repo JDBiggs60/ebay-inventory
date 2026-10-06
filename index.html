@@ -121,6 +121,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
  .verify-compare{grid-template-columns:1fr}
 }
 .location-confirmed{display:inline-block;background:#dff3e4;color:#15562a;padding:5px 9px;border-radius:8px;font-size:14px;font-weight:bold}.location-unverified{display:inline-block;background:#fff0d2;color:#744800;padding:5px 9px;border-radius:8px;font-size:14px;font-weight:bold}
+.audit-panel{border:3px solid #2463bd;background:#eef6ff}.audit-good{background:#dff3e4;color:#15562a;border-radius:10px;padding:12px;font-weight:bold}.audit-warning{background:#fff0d2;color:#744800;border-radius:10px;padding:12px}.stock-warning{display:inline-block;background:#fde1df;color:#8a1f17;padding:5px 9px;border-radius:8px;font-size:14px;font-weight:bold;margin-left:6px}
 .inventory-filters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:18px 0}.inventory-filters input,.inventory-filters select{width:100%;min-width:0}.inventory-filters label{font-size:16px;margin-top:0}.inventory-filters .filter-search{grid-column:1/-1}@media(max-width:600px){.inventory-filters{grid-template-columns:1fr}}
 /* Keep navigation within reach on long inventory and tote pages. */
 .floating-navigation{position:fixed;right:14px;bottom:calc(14px + env(safe-area-inset-bottom,0px));z-index:50;display:flex;gap:8px}
@@ -308,12 +309,27 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
     <button id="allTotes" class="secondary">← All Totes</button>
     <h2 id="toteTitle"></h2>
     <p id="toteSummary"></p>
-    <p class="small">These are saved locations. Use Move to another tote after moving the physical item. A move changes the entire record’s location; it does not split quantities between totes. Confirm location / stock after the move.</p>
-    <div class="searchbar"><input id="toteSearch" type="search" placeholder="Search within this tote"><select id="toteVerification" aria-label="Filter tote verification"><option value="">All location checks</option><option value="confirmed">Location confirmed</option><option value="unverified">Location not verified</option></select></div>
+    <p id="toteAuditStatus" class="audit-warning"></p>
+    <p class="small">The normal list contains records with this exact saved location. An SKU suggestion is shown separately and is not treated as proof that an item is physically in the tote. Ended or sold records with a confirmed quantity of zero are kept in history but hidden from the normal list.</p>
+    <div class="searchbar"><input id="toteSearch" type="search" placeholder="Search within this tote"><select id="toteVerification" aria-label="Filter tote verification"><option value="">Current tote records</option><option value="confirmed">Confirmed physical stock</option><option value="unverified">Needs physical checking</option><option value="archived">Ended/sold with zero stock</option></select></div>
     <button id="pageToteLabel" class="secondary">Make This Tote’s QR Label</button>
+    <button id="startToteAudit" class="primary">Start Physical Tote Audit</button>
+   </div>
+   <div id="toteAuditPanel" class="panel audit-panel" hidden>
+    <h2 id="toteAuditHeading">Physical Tote Audit</h2>
+    <p>Remove the items from the tote and handle them one at a time. Confirm every correct record. If an expected record is not physically present, mark it missing. If a physical item has no dependable record, save it to REVIEW.</p>
+    <p id="toteAuditCounts" class="audit-warning"></p>
+    <div class="actions"><button id="addUnexpectedHere" class="secondary">Add Unexpected Item to This Tote</button><button id="addUnexpectedReview" class="secondary">Save Unmatched Item to REVIEW</button></div>
+    <label class="verify-safety"><input id="toteAuditPhysicalComplete" type="checkbox"> I handled every physical item that is currently inside this tote.</label>
+    <div class="actions"><button id="finishToteAudit" class="primary" disabled>Finish and Date This Audit</button><button id="cancelToteAudit" class="secondary">Pause Audit</button></div>
    </div>
    <div id="toteCards" class="grid"></div>
    <button id="toteMore" class="secondary" hidden>Show More Items</button>
+   <div id="toteSuggestionsPanel" class="panel" hidden>
+    <h2>Possible Items Suggested Only by SKU</h2>
+    <p class="small">These records do not have this saved physical location. Their old SKU merely suggests this tote. Confirm them only if you physically find the matching item here.</p>
+    <div id="toteSuggestionCards" class="grid"></div>
+   </div>
   </section>
 
   <section id="connection" hidden>
@@ -493,7 +509,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <button id="floatingHome" type="button" class="primary" data-view="home" aria-label="Return to home screen" hidden>🏠 Home</button>
  </nav>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.06.18 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.06.19 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -3414,12 +3430,18 @@ function searchItems(query, items = state.items) {
 function locationConfirmed(x) {
  return Boolean(x.location && x.checkedAt && x.physicalQty > 0);
 }
+function archivedZeroStock(x) {
+ return (x.status === "Ended" || x.status === "Sold") && x.physicalQty === 0;
+}
 function locationBadge(x) {
  return '<span class="' + (locationConfirmed(x) ? 'location-confirmed' : 'location-unverified') + '">' +
   (locationConfirmed(x) ? '✓ Location confirmed' : 'Location not verified') + '</span>';
 }
 function appendActivity(notes, text) {
- const result = (notes ? notes + "\n" : "") + "[Inventory activity " + stamp() + "] " + text;
+ return appendActivityAt(notes,text,stamp());
+}
+function appendActivityAt(notes, text, time) {
+ const result = (notes ? notes + "\n" : "") + "[Inventory activity " + time + "] " + text;
  if (result.length > 10000) throw Error("Notes are full. Export a backup and shorten the notes before saving this activity.");
  return result;
 }
@@ -3505,7 +3527,9 @@ function card(x, verify = false) {
 
  const badge = '<span class="badge ' +
   x.status.toLowerCase().replace(/\s/g, "") +
-  '">Saved: ' + esc(x.status) + '</span>';
+  '">Saved: ' + esc(x.status) + '</span>' +
+  (archivedZeroStock(x) ? '<span class="stock-warning">Ended/sold — zero stock</span>' :
+   ((x.status === "Ended" || x.status === "Sold") && x.physicalQty > 0 ? '<span class="stock-warning">Listing ended/sold — physical stock remains</span>' : ''));
 
  const link = x.ebayId ?
   '<a class="button secondary" target="_blank" rel="noopener noreferrer" ' +
@@ -3537,6 +3561,7 @@ function card(x, verify = false) {
    '">Confirm location / stock</button>' : "") +
   (!verify ? '<button class="secondary" data-card-label="' + esc(x.id) + '">Print Item Label</button>' : '') +
   (!verify && x.checkedAt ? '<button class="secondary" data-unverify="' + esc(x.id) + '">Undo physical check</button>' : '') +
+  (!verify && currentView === "totePage" && toteAuditActive && !archivedZeroStock(x) ? '<button class="danger" data-audit-missing="' + esc(x.id) + '">Not Found in This Tote</button>' : '') +
   (!verify ? '<button class="secondary" data-move="' + esc(x.id) + '">Move to another tote</button>' : '') +
   (!verify && !x.ebayId ? '<button class="secondary" data-combine="' + esc(x.id) + '">Combine with eBay listing</button>' : '') +
   '</div></div></article>';
@@ -3544,6 +3569,7 @@ function card(x, verify = false) {
 
 function bindCards(el) {
  el.querySelectorAll("[data-move]").forEach(b => { b.onclick = () => openMove(b.dataset.move); });
+ el.querySelectorAll("[data-audit-missing]").forEach(b => { b.onclick = work(() => markMissingFromTote(b.dataset.auditMissing)); });
  el.querySelectorAll("[data-card-label]").forEach(b => {
   b.onclick = work(() => {
    const item = state.items.find(x => x.id === b.dataset.cardLabel);
@@ -3631,7 +3657,7 @@ function renderInventory() {
 
  if ($("toteFilter").value) {
   rows = rows.filter(x =>
-   canonicalLocation(x.location || suggestedSkuLocation(x.sku)).toLowerCase() === canonicalLocation($("toteFilter").value).toLowerCase()
+   canonicalLocation(x.location).toLowerCase() === canonicalLocation($("toteFilter").value).toLowerCase()
   );
  }
 
@@ -4730,32 +4756,91 @@ function labelPdfBytes(canvas) {
 $("labelPdf").onclick=work(()=>{if(labelCanvas)download(labelFilename+".pdf",labelPdfBytes(labelCanvas),"application/pdf");});
 
 
-let selectedTote = "", toteLimit = 40, movingItemId = null;
-function toteItems(name) {
+let selectedTote = "", toteLimit = 40, movingItemId = null, toteAuditActive = false;
+function assignedToteItems(name) {
  const wanted = canonicalLocation(name).toLowerCase();
- return state.items.filter(x =>
-  canonicalLocation(x.location || suggestedSkuLocation(x.sku)).toLowerCase() === wanted
- );
+ return state.items.filter(x => canonicalLocation(x.location).toLowerCase() === wanted);
+}
+function toteItems(name) {
+ return assignedToteItems(name).filter(x => !archivedZeroStock(x));
+}
+function toteSkuSuggestions(name) {
+ if (!name) return [];
+ const wanted = canonicalLocation(name).toLowerCase();
+ return state.items.filter(x => !x.location && canonicalLocation(suggestedSkuLocation(x.sku)).toLowerCase() === wanted);
+}
+function toteAuditMarkers(item, name) {
+ const phrase = "Tote audit completed for " + canonicalLocation(name) + ".";
+ return String(item.notes || "").split("\n").map(line => {
+  if (!line.includes(phrase)) return "";
+  const match = line.match(/^\[Inventory activity ([^\]]+)\]/);
+  return match && Number.isFinite(Date.parse(match[1])) ? match[1] : "";
+ }).filter(Boolean);
+}
+function completedToteAuditDate(name, items = toteItems(name)) {
+ if (!items.length || items.some(x => !locationConfirmed(x))) return "";
+ let shared = new Set(toteAuditMarkers(items[0], name));
+ for (const item of items.slice(1)) {
+  const dates = new Set(toteAuditMarkers(item, name));
+  shared = new Set([...shared].filter(date => dates.has(date)));
+ }
+ return [...shared].sort().at(-1) || "";
 }
 function openTote(name) {
  if (locked) return;
- selectedTote = name; toteLimit = 40;
+ selectedTote = canonicalLocation(name); toteLimit = 40; toteAuditActive = false;
  $("toteSearch").value = ""; $("toteVerification").value = "";
  show("totePage");
 }
 function renderTotePage() {
- const items = toteItems(selectedTote);
+ const assigned = assignedToteItems(selectedTote);
+ const archived = assigned.filter(archivedZeroStock);
+ const items = assigned.filter(x => !archivedZeroStock(x));
+ const suggestions = toteSkuSuggestions(selectedTote);
  const confirmed = items.filter(locationConfirmed).length;
+ const unresolved = items.filter(x => !locationConfirmed(x));
  $("toteTitle").textContent = selectedTote ? "Tote / location: " + selectedTote : "Location missing";
- let rows = searchItems($("toteSearch").value, items);
- if ($("toteVerification").value) rows = rows.filter(x => locationConfirmed(x) === ($("toteVerification").value === "confirmed"));
+ $("toteAuditStatus").hidden = !selectedTote;
+ let rows = $("toteVerification").value === "archived" ? archived : items;
+ rows = searchItems($("toteSearch").value, rows);
+ if ($("toteVerification").value === "confirmed") rows = rows.filter(locationConfirmed);
+ if ($("toteVerification").value === "unverified") rows = rows.filter(x => !locationConfirmed(x));
  rows.sort((a,b)=>a.title.localeCompare(b.title,undefined,{numeric:true}));
- const suggested = items.filter(x => !x.location && canonicalLocation(suggestedSkuLocation(x.sku)).toLowerCase() === canonicalLocation(selectedTote).toLowerCase()).length;
- $("toteSummary").textContent = items.length + " records · " + confirmed + " confirmed · " + (items.length-confirmed) + " not verified" + (suggested ? " · " + suggested + " suggested from eBay SKUs" : "") + ". Showing " + Math.min(toteLimit,rows.length) + " of " + rows.length + " matching records.";
+ $("toteSummary").textContent = items.length + " current saved-location records · " + confirmed + " confirmed in stock · " + unresolved.length + " need checking · " + archived.length + " ended/sold zero-stock records hidden" + (suggestions.length ? " · " + suggestions.length + " separate SKU suggestion" + (suggestions.length === 1 ? "" : "s") : "") + ". Showing " + Math.min(toteLimit,rows.length) + " of " + rows.length + " matching records.";
  $("pageToteLabel").hidden = !selectedTote;
+ $("startToteAudit").hidden = !selectedTote || toteAuditActive;
+ $("toteAuditPanel").hidden = !toteAuditActive;
+ const auditDate = completedToteAuditDate(selectedTote, items);
+ $("toteAuditStatus").className = auditDate ? "audit-good" : "audit-warning";
+ $("toteAuditStatus").textContent = auditDate ? "✓ " + selectedTote + " fully audited on " + when(auditDate) + "." : "This tote is not yet fully audited. Its contents should not be treated as guaranteed until every physical item and every saved-location record is reconciled.";
+ if (toteAuditActive) {
+  $("toteAuditHeading").textContent = "Physical Tote Audit: " + selectedTote;
+  const endedWithStock = items.filter(x => (x.status === "Ended" || x.status === "Sold") && x.physicalQty > 0).length;
+  $("toteAuditCounts").textContent = confirmed + " confirmed in stock · " + unresolved.length + " unresolved saved records · " + suggestions.length + " SKU-only suggestions shown separately" + (endedWithStock ? " · " + endedWithStock + " ended/sold listing" + (endedWithStock === 1 ? " has" : "s have") + " physical stock" : "") + ".";
+  $("finishToteAudit").disabled = unresolved.length > 0 || !$("toteAuditPhysicalComplete").checked;
+ }
  $("toteCards").innerHTML = rows.slice(0,toteLimit).map(x=>card(x)).join("") || '<p class="empty">No items match in this location.</p>';
  $("toteMore").hidden = rows.length <= toteLimit;
  bindCards($("toteCards"));
+ $("toteSuggestionsPanel").hidden = !selectedTote || !suggestions.length;
+ $("toteSuggestionCards").innerHTML = suggestions.map(x => card(x)).join("");
+ bindCards($("toteSuggestionCards"));
+}
+async function markMissingFromTote(id) {
+ const item = state.items.find(x => x.id === id);
+ if (!item) throw Error("This record is no longer available. Tap Refresh and try again.");
+ if (!confirm("Mark " + item.title + " as not found in " + selectedTote + "? It will move to the MISSING — " + selectedTote + " review location with physical quantity zero. This does not change eBay.")) return;
+ const time = stamp();
+ const updated = normalizeItem({
+  ...item,
+  physicalQty: 0,
+  location: "MISSING — " + selectedTote,
+  checkedAt: time,
+  notes: appendActivity(item.notes,"Expected in " + selectedTote + " but not physically found during tote audit. Moved to missing-item review."),
+  updatedAt: time
+ });
+ await mergeItems([updated]);
+ notify("Marked missing from " + selectedTote + ". The record was preserved and eBay was not changed.");
 }
 function openMove(id) {
  if (locked) return;
@@ -4789,6 +4874,33 @@ $("toteSearch").oninput=()=>{toteLimit=40;renderTotePage();};
 $("toteVerification").onchange=()=>{toteLimit=40;renderTotePage();};
 $("toteMore").onclick=()=>{toteLimit+=40;renderTotePage();};
 $("pageToteLabel").onclick=work(()=>makeLabel(null,selectedTote));
+$("startToteAudit").onclick=()=>{
+ toteAuditActive=true;
+ $("toteAuditPhysicalComplete").checked=false;
+ $("toteVerification").value="";
+ toteLimit=10000;
+ renderTotePage();
+ $("toteAuditPanel").scrollIntoView({behavior:"smooth",block:"start"});
+};
+$("cancelToteAudit").onclick=()=>{toteAuditActive=false;$("toteAuditPhysicalComplete").checked=false;toteLimit=40;renderTotePage();};
+$("toteAuditPhysicalComplete").onchange=renderTotePage;
+$("addUnexpectedHere").onclick=()=>openEditor(null,{title:"Unexpected item found in " + selectedTote,status:"Unknown",location:selectedTote,notes:"Found while physically auditing " + selectedTote + ". Confirm its identity and physical quantity after saving."});
+$("addUnexpectedReview").onclick=()=>openEditor(null,{title:"Unmatched item from " + selectedTote,status:"Unknown",location:"REVIEW",notes:"Found while physically auditing " + selectedTote + ". Moved to REVIEW because no dependable app or eBay record was found."});
+$("finishToteAudit").onclick=work(async()=>{
+ const items=toteItems(selectedTote);
+ const unresolved=items.filter(x=>!locationConfirmed(x));
+ if(unresolved.length) throw Error("Finish the " + unresolved.length + " unresolved saved record" + (unresolved.length===1?"":"s") + " before completing this audit.");
+ if(!$("toteAuditPhysicalComplete").checked) throw Error("Check the box confirming that you handled every physical item in this tote.");
+ if(!items.length) throw Error("There are no confirmed physical-stock records in this tote to date. Save and confirm its items first.");
+ const time=stamp();
+ const updated=items.map(item=>normalizeItem({...item,notes:appendActivityAt(item.notes,"Tote audit completed for " + selectedTote + ". Every physical item and saved-location record was reconciled.",time),updatedAt:time}));
+ await mergeItems(updated);
+ toteAuditActive=false;
+ $("toteAuditPhysicalComplete").checked=false;
+ toteLimit=40;
+ renderTotePage();
+ notify(selectedTote + " audit completed and dated. The app record was updated; eBay was not changed.");
+});
 
 
 function editorMessage(message,bad=false) {
