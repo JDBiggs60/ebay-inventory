@@ -404,7 +404,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
     <p id="notFoundSummary" class="small"></p>
     <div id="notFoundList"></div>
    </div>
-   <div class="panel">
+   <div id="repeatedPhotosPanel" class="panel">
     <h2>Repeated Saved Photos</h2>
     <p>
      Find an identical uploaded photo that was accidentally saved on more than one record.
@@ -412,11 +412,12 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
     </p>
     <p class="small">For extra safety, make a full backup before removing photos. Nothing is selected automatically.</p>
     <button id="scanDuplicatePhotos" class="secondary" type="button">Find Repeated Photos</button>
+    <button id="showOtherProblems" class="secondary" type="button" hidden>Show Missing Locations and Other Problems</button>
     <p id="duplicatePhotoSummary" class="small"></p>
     <div id="duplicatePhotoGroups"></div>
     <button id="removeSelectedDuplicatePhotos" class="danger" type="button" hidden>Remove Selected Wrong Photos</button>
    </div>
-   <div class="panel">
+   <div id="otherProblemsPanel" class="panel">
     <h2>Missing Locations and Other Inventory Problems</h2>
     <p class="small"><strong>These are not repeated-photo results.</strong> Items appear here for reasons such as a missing location, an unverified physical count, a quantity difference, or another saved-record warning.</p>
     <div id="problemsList"></div>
@@ -492,7 +493,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <button id="floatingHome" type="button" class="primary" data-view="home" aria-label="Return to home screen" hidden>🏠 Home</button>
  </nav>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.06.14 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.06.15 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -3347,6 +3348,10 @@ function show(view) {
  viewScrollPositions[currentView] = window.scrollY;
  ignoreScrollMemory = true;
  currentView = view;
+ if (view === "problems") {
+  $("otherProblemsPanel").hidden = false;
+  $("showOtherProblems").hidden = true;
+ }
  document.querySelectorAll("main>section").forEach(s => {
   s.hidden = s.id !== view;
  });
@@ -3687,7 +3692,15 @@ function renderDuplicatePhotoCleanup() {
 
 $("scanDuplicatePhotos").onclick = () => {
  duplicatePhotoScanDone = true;
+ $("otherProblemsPanel").hidden = true;
+ $("showOtherProblems").hidden = false;
  renderDuplicatePhotoCleanup();
+};
+
+$("showOtherProblems").onclick = () => {
+ $("otherProblemsPanel").hidden = false;
+ $("showOtherProblems").hidden = true;
+ $("otherProblemsPanel").scrollIntoView({behavior:"smooth",block:"start"});
 };
 
 $("removeSelectedDuplicatePhotos").onclick = work(async () => {
