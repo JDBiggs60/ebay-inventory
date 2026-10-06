@@ -493,7 +493,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <button id="floatingHome" type="button" class="primary" data-view="home" aria-label="Return to home screen" hidden>🏠 Home</button>
  </nav>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.06.15 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.06.16 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -3364,12 +3364,25 @@ function show(view) {
  });
 }
 
+function normalizedSearchText(value) {
+ return String(value || "").normalize("NFKC").toLowerCase()
+  .replace(/[\u2010-\u2015\u2212]/g,"-");
+}
+function compactSearchText(value) {
+ return normalizedSearchText(value).replace(/[^a-z0-9]/g,"");
+}
 function searchItems(query, items = state.items) {
- const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+ const normalizedQuery = normalizedSearchText(query).trim();
+ const terms = normalizedQuery.split(/\s+/).filter(Boolean);
+ const compactQuery = compactSearchText(normalizedQuery);
 
  return items.filter(x => {
-  const t = [x.title, x.ebayId, x.sku, x.location, x.notes].join(" ").toLowerCase();
-  return terms.every(term => t.includes(term));
+  const fields = [x.title, x.ebayId, x.sku, x.location, x.notes].map(normalizedSearchText);
+  const combined = fields.join(" ");
+  const wordsMatch = terms.every(term => combined.includes(term));
+  const punctuationFreeMatch = compactQuery.length > 1 &&
+   fields.some(field => compactSearchText(field).includes(compactQuery));
+  return wordsMatch || punctuationFreeMatch;
  });
 }
 
@@ -4755,7 +4768,7 @@ function editorHasChanges(x) {
  return ["title","ebayId","sku","status","price","listingQty","location","notes"].some(k=>$("f_"+k).value!==String(x[k]??"")) || JSON.stringify(editPhotos)!==JSON.stringify(x.photos);
 }
 function canonicalLocation(value) {
- const text=String(value||"").trim();
+ const text=String(value||"").normalize("NFKC").trim().replace(/[\u2010-\u2015\u2212]/g,"-");
  // Treat A-13, A 13, A013 and A13 as the same tote without rewriting old records.
  const tote=text.match(/^A\s*-?\s*0*(\d{1,2})$/i);
  if(tote) {
@@ -4765,11 +4778,11 @@ function canonicalLocation(value) {
  return text;
 }
 function suggestedSkuLocation(sku) {
- const value=String(sku||"").trim();
- // Only known tote numbers and explicit cabinet prefixes with a numeric item suffix.
- const tote=value.match(/^A\s*-?\s*(0?[1-9]|1[0-6])\s*[/\-]\s*\d+$/i);
+ const value=String(sku||"").normalize("NFKC").trim().replace(/[\u2010-\u2015\u2212]/g,"-");
+ // Accept old labels with a slash, one or more dashes, or spaces while keeping the original SKU unchanged.
+ const tote=value.match(/^A\s*-?\s*0*(1[0-6]|[1-9])(?:(?:\s*[-/_:]\s*)+|\s+)\d+$/i);
  if(tote) return "A"+Number(tote[1]);
- const cabinet=value.match(/^(first|second|third)\s+cabinet\s*[-/]\s*\d+$/i);
+ const cabinet=value.match(/^(first|second|third)\s+cabinet(?:(?:\s*[-/_:]\s*)+|\s+)\d+$/i);
  if(cabinet) return cabinet[1][0].toUpperCase()+cabinet[1].slice(1).toLowerCase()+" cabinet";
  return "";
 }
