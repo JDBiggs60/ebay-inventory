@@ -162,6 +162,10 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <button id="back" class="secondary" data-view="home" hidden>← Home</button>
   <span class="small">Cloud inventory · read-only live eBay connection</span><button id="reloadCloud" class="secondary">Refresh</button><button id="migrateLocal" class="secondary" hidden>Copy previous browser inventory</button><button id="logout" class="secondary">Sign out</button>
  </div>
+ <div id="cloudSafetyLock" class="notice error" hidden>
+  <strong>Cloud inventory is not current.</strong>
+  <span id="cloudSafetyLockText">Item changes are locked. Tap Refresh above before continuing.</span>
+ </div>
 
  <main class="container">
 
@@ -323,8 +327,8 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
     <p class="small"><a href="privacy.html" target="_blank" rel="noopener noreferrer">Privacy policy</a></p>
     <p class="small">
      Imported reports do not change your eBay listings.
-     Items missing from a report retain their previous saved status;
-     absence is not treated as proof of a sale.
+     Items missing from a report retain their previous saved status and are moved into the
+     Not Found review section; absence is not treated as proof of a sale.
     </p>
     <a class="button secondary" href="https://www.ebay.com/sh/ovw"
      target="_blank" rel="noopener noreferrer">Open Seller Hub</a>
@@ -339,7 +343,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
     <pre id="livePreview">The review will show matches, new listings, changed listing details, and saved records absent from the active list.</pre>
     <div id="livePhotoPreview" class="grid"></div>
     <button id="applyEbayLive" class="primary" disabled>Apply Reviewed Active Listings to App</button>
-    <p class="small">Applying updates titles, prices, active status, quantities, available eBay SKUs and eBay listing thumbnails. Tote locations, physical checks, notes, your own saved photos and saved SKUs missing from eBay are preserved. Records absent from the active list are kept unchanged.</p>
+    <p class="small">Applying updates titles, prices, active status, quantities, available eBay SKUs and eBay listing thumbnails. Tote locations, physical checks, notes, your own saved photos and saved SKUs missing from eBay are preserved. Records absent from the active list remain saved and move into the Not Found review section.</p>
    </div>
 
    <div class="panel">
@@ -393,6 +397,12 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
     <label for="problemSearch">Search inventory problems</label>
     <input id="problemSearch" type="search" placeholder="Item name, SKU, eBay number, or tote/location">
     <p id="problemSearchCount" class="small"></p>
+   </div>
+   <div class="panel">
+    <h2>Not Found in Latest eBay Refresh or Import</h2>
+    <p>These records were preserved because a missing listing does not prove it sold or ended. Check Seller Hub before changing the saved status.</p>
+    <p id="notFoundSummary" class="small"></p>
+    <div id="notFoundList"></div>
    </div>
    <div class="panel">
     <h2>Repeated Saved Photos</h2>
@@ -478,7 +488,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <button id="floatingHome" type="button" class="primary" data-view="home" aria-label="Return to home screen" hidden>🏠 Home</button>
  </nav>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.05.12 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.06.13 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -3135,6 +3145,7 @@ let pendingLiveReview = null;
 let liveListingById = new Map();
 let savedEbayImageById = new Map();
 let locked = false;
+let cloudInventoryReady = false;
 let backupDownloadedThisSession = false;
 let currentView = "home";
 const viewScrollPositions = Object.create(null);
@@ -3155,6 +3166,21 @@ function notify(s, bad = false) {
 
 function copy(v) {
  return JSON.parse(JSON.stringify(v));
+}
+
+function setCloudInventoryReady(ready, detail = "") {
+ cloudInventoryReady = ready;
+ $("cloudSafetyLock").hidden = ready;
+ if (!ready) {
+  $("cloudSafetyLockText").textContent = detail ||
+   "The inventory on this screen may be outdated. Item changes are locked. Tap Refresh above before continuing.";
+ }
+}
+
+function requireCurrentCloudInventory() {
+ if (!cloudInventoryReady) {
+  throw Error("Cloud inventory is not current. Tap Refresh at the top of the app before changing records or printing labels.");
+ }
 }
 
 function work(fn) {
@@ -3270,6 +3296,7 @@ async function cloudState() {
 }
 async function commit(next) {
  if (!accountId) throw Error("Sign in before saving.");
+ requireCurrentCloudInventory();
  next.items = validateBackup({app:APP,version:1,items:next.items});
  const records = [];
  for (const item of next.items) {
@@ -3374,8 +3401,16 @@ function duplicateEbayCount(x) {
  return x.ebayId ? state.items.filter(y => y.id !== x.id && y.ebayId === x.ebayId).length : 0;
 }
 
+function notFoundInLatestEbay(x) {
+ return /^Not Found in Latest eBay (Refresh|Import)$/.test(x.source || "");
+}
+
 function issues(x) {
  const a = [];
+
+ if (notFoundInLatestEbay(x)) {
+  a.push("Not found in the latest eBay refresh or import; current status is unknown. Last seen: " + when(x.statusAt));
+ }
 
  const suggested = suggestedSkuLocation(x.sku);
  if (suggested && x.location && canonicalLocation(suggested).toLowerCase() !== canonicalLocation(x.location).toLowerCase()) a.push("SKU suggests " + suggested + "; saved location is " + x.location + ". Check physically; SKU may be old.");
@@ -3444,7 +3479,7 @@ function card(x, verify = false) {
   '<br>Listing qty: ' + (x.listingQty ?? "Unknown") +
   ' · Physical qty: ' + (x.physicalQty ?? "Not checked") +
   '<br>Physical check: ' + esc(when(x.checkedAt)) +
-  '<br>Status recorded: ' + esc(when(x.statusAt)) +
+  '<br>' + (notFoundInLatestEbay(x) ? 'Last seen on eBay: ' : 'Status recorded: ') + esc(when(x.statusAt)) +
   ' · ' + esc(x.source) + '</p>' +
   '<div class="actions">' + link +
   '<button class="primary" data-' + (verify ? "match" : "edit") +
@@ -3674,6 +3709,8 @@ function renderProblems() {
  const problemRows = state.items.filter(x => issues(x).length);
  const query = $("problemSearch").value.trim();
  const rows = query ? searchItems(query, problemRows) : problemRows;
+ const allNotFound = state.items.filter(notFoundInLatestEbay);
+ const notFoundRows = query ? searchItems(query, allNotFound) : allNotFound;
 
  $("problemSearchCount").textContent = query ?
   rows.length + " matching problem records out of " + problemRows.length + "." :
@@ -3689,6 +3726,16 @@ function renderProblems() {
   '<p class="empty">No issues found in saved records. This is not a live eBay audit.</p>');
 
  bindCards($("problemsList"));
+ $("notFoundSummary").textContent = allNotFound.length ?
+  (query ? notFoundRows.length + " matching records out of " + allNotFound.length + " preserved records." :
+   allNotFound.length + " preserved record" + (allNotFound.length === 1 ? "" : "s") + " need an eBay status check.") :
+  "No saved records are currently marked as missing from the latest eBay refresh or import.";
+ $("notFoundList").innerHTML = notFoundRows.map(x =>
+  '<article class="problem"><h3>' + esc(x.title) + '</h3><p>eBay # ' + esc(x.ebayId || "Not linked") +
+  ' · Last seen: ' + esc(when(x.statusAt)) + ' · Saved status: ' + esc(x.status) +
+  '</p><button class="primary" data-edit="' + esc(x.id) + '">Review record</button></article>'
+ ).join("") || '<p class="empty">' + (query ? "No preserved missing records match this search." : "Nothing is waiting here.") + '</p>';
+ bindCards($("notFoundList"));
  renderDuplicatePhotoCleanup();
 }
 
@@ -4033,7 +4080,23 @@ function prepareCsv(text, status) {
  });
 
  if (!items.length) throw Error(errors[0] || "No item rows found.");
- return {items, errors, column};
+ return {items, errors, column, status};
+}
+
+function csvImportReview(prepared) {
+ const incomingIds = new Set(prepared.items.map(x => x.ebayId).filter(Boolean));
+ let added = 0;
+ let updated = 0;
+ for (const incoming of prepared.items) {
+  const found = state.items.some(saved =>
+   (incoming.ebayId && saved.ebayId === incoming.ebayId) || listingKey(saved) === listingKey(incoming)
+  );
+  if (found) updated++;
+  else added++;
+ }
+ const missing = prepared.status === "Active" ?
+  state.items.filter(x => x.ebayId && !incomingIds.has(x.ebayId)) : [];
+ return {added, updated, missing};
 }
 
 async function mergeItems(items) {
@@ -4290,10 +4353,14 @@ $("csvFile").onchange = work(async () => {
  if (f.size > 15 * 1024 * 1024) throw Error("CSV file is too large.");
 
  pendingImport = prepareCsv(await f.text(), $("reportStatus").value);
+ const review = csvImportReview(pendingImport);
 
  $("importPreview").textContent =
-  pendingImport.items.length + " valid rows; " +
-  pendingImport.errors.length + " rejected rows.\n" +
+  "IMPORT REVIEW — NOTHING SAVED YET\n" +
+  review.added + " listings will be added\n" +
+  review.updated + " existing listings will be updated\n" +
+  review.missing.length + (pendingImport.status === "Active" ? " saved listings were not found and will be preserved for review\n" : " listings will be marked missing (only a complete Active report does this)\n") +
+  pendingImport.errors.length + " rejected rows\n\nExamples:\n" +
   pendingImport.items.slice(0, 5).map(x => x.title).join("\n") +
   (pendingImport.errors.length ?
    "\n" + pendingImport.errors.slice(0, 15).join("\n") : "");
@@ -4311,10 +4378,10 @@ $("reportStatus").onchange = () => {
 
 $("confirmImport").onclick = work(async () => {
  if (!pendingImport) return;
+ const review = csvImportReview(pendingImport);
 
  if (!confirm(
-  "Import " + pendingImport.items.length +
-  " valid rows? Matching listing numbers and SKUs will be updated. " +
+  "Apply this reviewed report? " + review.added + " listings will be added, " + review.updated + " will be updated, and " + review.missing.length + " will be preserved in the Not Found review section. " +
   "Photos, tote locations already entered, and physical checks will be kept. " +
   "Rejected rows will be skipped."
  )) return;
@@ -4322,7 +4389,9 @@ $("confirmImport").onclick = work(async () => {
  const next = copy(state);
 
  for (const x of pendingImport.items) {
-  const ix = next.items.findIndex(y => listingKey(y) === listingKey(x));
+  const ix = next.items.findIndex(y =>
+   (x.ebayId && y.ebayId === x.ebayId) || listingKey(y) === listingKey(x)
+  );
 
   if (ix < 0) {
    next.items.push(x);
@@ -4333,7 +4402,7 @@ $("confirmImport").onclick = work(async () => {
     ...old,
     title: x.title,
     ebayId: x.ebayId,
-    sku: x.sku,
+    sku: x.sku || old.sku,
     status: x.status,
     statusAt: x.statusAt,
     source: x.source,
@@ -4354,6 +4423,13 @@ $("confirmImport").onclick = work(async () => {
   }
  }
 
+ if (pendingImport.status === "Active") {
+  const importedIds = new Set(pendingImport.items.map(x => x.ebayId).filter(Boolean));
+  const missingTime = stamp();
+  next.items = next.items.map(item => item.ebayId && !importedIds.has(item.ebayId) ?
+   normalizeItem({...item, source:"Not Found in Latest eBay Import", updatedAt:missingTime}) : item);
+ }
+
  next.importedAt = stamp();
  await commit(next);
 
@@ -4361,9 +4437,9 @@ $("confirmImport").onclick = work(async () => {
  $("confirmImport").disabled = true;
  $("csvFile").value = "";
  $("importPreview").textContent =
-  "Imported successfully. Records absent from the report were kept with their previous saved status.";
+  "Import complete: " + review.added + " added, " + review.updated + " updated, " + review.missing.length + " not found and preserved for review.";
 
- notify("Listing report imported. These are report snapshots, not live eBay statuses.");
+ notify("Listing report applied: " + review.added + " added, " + review.updated + " updated, " + review.missing.length + " preserved in Not Found. No eBay listing was changed.");
 });
 
 $("backupDownload").onclick = work(async () => {
@@ -4512,6 +4588,7 @@ function openQrDestination() {
 window.addEventListener("hashchange",openQrDestination);
 let lastLabelItem = null, lastLabelTote = "";
 function makeLabel(item, tote, mode = "inventory") {
+ requireCurrentCloudInventory();
  lastLabelItem = item; lastLabelTote = tote;
  $("labelMode").value = mode;
  if (mode === "public" && (!item || !/^\d{9,15}$/.test(item.ebayId))) throw Error("A public label needs an item with a saved eBay number. Choose Inventory or Text only.");
@@ -4743,7 +4820,7 @@ function validLiveListing(x) {
 }
 function liveDifference(saved, live) {
  return saved.title !== live.title.trim() || (live.sku.trim() && saved.sku !== live.sku.trim()) || saved.status !== "Active" ||
-  saved.price !== live.price || saved.listingQty !== live.quantity_available;
+  saved.price !== live.price || saved.listingQty !== live.quantity_available || notFoundInLatestEbay(saved);
 }
 function makeLiveReview(listings, fetchedAt) {
  const liveIds = new Set(listings.map(x => x.item_id));
@@ -4770,7 +4847,7 @@ function liveReviewText(review) {
   review.matched.length + " matched saved records",
   review.changed.length + " matched records with title, SKU, price, quantity, or status changes",
   review.added.length + " new active listings not yet saved in the app",
-  review.missing.length + " saved linked records absent from the active list (they will remain unchanged)",
+  review.missing.length + " saved linked records absent from the active list (they will remain saved and move to Not Found)",
   "",
   "Examples of changes:",
   ...review.changed.slice(0,8).map(x => x.live.item_id + " · " + x.live.title),
@@ -4838,7 +4915,7 @@ $("cancelEbayReview").onclick = () => {
 $("applyEbayLive").onclick = work(async () => {
  const review = pendingLiveReview;
  if (!review) throw Error("Run the live refresh again before applying changes.");
- if (!confirm("Apply " + review.listings.length + " reviewed active listings and their eBay thumbnails to this app? " + review.changed.length + " matched records will be updated and " + review.added.length + " new records will be added. Tote locations, physical checks, notes and your own saved photos will be preserved. " + review.missing.length + " records absent from the active list will remain unchanged.")) return;
+ if (!confirm("Apply this reviewed refresh? " + review.added.length + " listings will be added, " + review.changed.length + " matched listings will be updated, and " + review.missing.length + " absent records will remain saved and move to the Not Found review section. Tote locations, physical checks, notes and your own saved photos will be preserved.")) return;
  const next = copy(state), time = stamp();
  const byEbay = new Map(next.items.filter(x => x.ebayId).map(x => [x.ebayId,x]));
  for (const live of review.listings) {
@@ -4851,6 +4928,9 @@ $("applyEbayLive").onclick = work(async () => {
    next.items.push(added); byEbay.set(added.ebayId,added);
   }
  }
+ const liveIds = new Set(review.listings.map(x => x.item_id));
+ next.items = next.items.map(item => item.ebayId && !liveIds.has(item.ebayId) ?
+  normalizeItem({...item, source:"Not Found in Latest eBay Refresh", updatedAt:time}) : item);
  next.importedAt = time;
  const imageRows = review.listings.filter(x => x.gallery_url).map(x => ({user_id:accountId,ebay_id:x.item_id,image_url:x.gallery_url,updated_at:time}));
  for (let start = 0; start < imageRows.length; start += 200) {
@@ -4859,8 +4939,8 @@ $("applyEbayLive").onclick = work(async () => {
  for (const x of imageRows) savedEbayImageById.set(x.ebay_id,x.image_url);
  await commit(next);
  $("applyEbayLive").disabled = true;
- $("liveProgress").textContent = "Applied " + review.listings.length + " active listings to the app at " + when(time) + ". " + review.missing.length + " absent records were kept unchanged.";
- notify("Live active listings and eBay thumbnails saved to the app. No eBay listing was changed.");
+ $("liveProgress").textContent = "Refresh applied at " + when(time) + ": " + review.added.length + " added, " + review.changed.length + " updated, " + review.missing.length + " not found and preserved for review.";
+ notify("eBay refresh applied: " + review.added.length + " added, " + review.changed.length + " updated, " + review.missing.length + " preserved in Not Found. No eBay listing was changed.");
  pendingLiveReview = null;
 });
 
@@ -4926,6 +5006,7 @@ async function start() {
  $("migrateLocal").hidden = !previous.items.length;
  state = await cloudState();
  state.items = validateBackup({app: APP, version: 1, items: state.items});
+ setCloudInventoryReady(true);
  renderAll();
 
  if (navigator.storage?.persist) {
@@ -4951,7 +5032,21 @@ $("showPassword").onclick = () => {
  $("password").type = show ? "text" : "password";
  $("showPassword").textContent = show ? "Hide password" : "Show password";
 };
-$("reloadCloud").onclick = work(async () => {state = await cloudState();renderAll();notify("Loaded the latest saved cloud inventory.");});
+$("reloadCloud").onclick = work(async () => {
+ const previousImages = savedEbayImageById;
+ try {
+  const latest = await cloudState();
+  latest.items = validateBackup({app:APP,version:1,items:latest.items});
+  state = latest;
+  setCloudInventoryReady(true);
+  renderAll();
+  notify("Loaded the latest saved cloud inventory. Item changes are unlocked.");
+ } catch (e) {
+  savedEbayImageById = previousImages;
+  setCloudInventoryReady(false,"The inventory on this screen may be outdated. Item changes and label printing are locked. Tap Refresh again. " + (e.message || "Cloud load failed."));
+  throw Error("Cloud refresh failed. The inventory still visible may be outdated, so item changes are locked. Tap Refresh again. " + (e.message || ""));
+ }
+});
 $("logout").onclick = work(async () => {
  resultOrThrow(await cloud.auth.signOut({scope:"local"}));
  location.reload();
