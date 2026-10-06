@@ -493,7 +493,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <button id="floatingHome" type="button" class="primary" data-view="home" aria-label="Return to home screen" hidden>🏠 Home</button>
  </nav>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.06.16 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.06.17 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -3375,6 +3375,31 @@ function searchItems(query, items = state.items) {
  const normalizedQuery = normalizedSearchText(query).trim();
  const terms = normalizedQuery.split(/\s+/).filter(Boolean);
  const compactQuery = compactSearchText(normalizedQuery);
+
+ // Prefer an exact identifier before the broader title-and-notes search.
+ // This keeps a search for 0001 from also matching unrelated model numbers
+ // whose title happens to contain the same digits across spaces or punctuation.
+ if (normalizedQuery) {
+  const exactEbay = items.filter(x => normalizedSearchText(x.ebayId).trim() === normalizedQuery);
+  if (exactEbay.length) return exactEbay;
+
+  const exactSku = items.filter(x => compactSearchText(x.sku) === compactQuery);
+  if (compactQuery.length > 1 && exactSku.length) return exactSku;
+
+  if (/^\d{1,7}$/.test(normalizedQuery)) {
+   const wantedNumber = normalizedQuery.replace(/^0+(?=\d)/, "");
+   const exactInventoryNumber = items.filter(x => {
+    const sku = normalizedSearchText(x.sku).trim();
+    const trailingNumber = sku.match(/(?:^|[-\/_:\s])0*(\d+)\s*$/);
+    return trailingNumber && trailingNumber[1].replace(/^0+(?=\d)/, "") === wantedNumber;
+   });
+   return exactInventoryNumber;
+  }
+
+  // A long all-numeric search is treated as a complete eBay item number.
+  // If it was not found above, show no misleading title matches.
+  if (/^\d{8,}$/.test(normalizedQuery)) return [];
+ }
 
  return items.filter(x => {
   const fields = [x.title, x.ebayId, x.sku, x.location, x.notes].map(normalizedSearchText);
