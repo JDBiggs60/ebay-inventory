@@ -493,7 +493,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <button id="floatingHome" type="button" class="primary" data-view="home" aria-label="Return to home screen" hidden>🏠 Home</button>
  </nav>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.06.17 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.06.18 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -4656,34 +4656,40 @@ function makeLabel(item, tote, mode = "inventory") {
  if (destination) { qr.addData(destination); qr.make(); }
  const canvas = document.createElement("canvas"); canvas.width = 800; canvas.height = 600;
  const ctx = canvas.getContext("2d"); ctx.fillStyle="white";ctx.fillRect(0,0,800,600);ctx.fillStyle="black";
- const count = destination ? qr.getModuleCount() : 0, cell = Math.floor(360/(count+8));
- const originX=420+Math.floor((360-(count+8)*cell)/2)+4*cell;
- const originY=170+Math.floor((360-(count+8)*cell)/2)+4*cell;
+ // Keep the QR large enough to scan while giving the printed words more room.
+ const count = destination ? qr.getModuleCount() : 0, cell = Math.floor(320/(count+8));
+ const originX=468+Math.floor((304-(count+8)*cell)/2)+4*cell;
+ const originY=230+Math.floor((320-(count+8)*cell)/2)+4*cell;
  for(let y=0;y<count;y++) for(let x=0;x<count;x++) if(qr.isDark(y,x)) ctx.fillRect(originX+x*cell,originY+y*cell,cell,cell);
- function fit(text,x,y,width,size,bold=false) {
+ function fit(text,x,y,width,size,bold=false,minSize=28) {
   text=String(text);ctx.font=(bold?"bold ":"")+size+"px Arial";
-  while(ctx.measureText(text).width>width && size>24) {size--;ctx.font=(bold?"bold ":"")+size+"px Arial";}
+  while(ctx.measureText(text).width>width && size>minSize) {size--;ctx.font=(bold?"bold ":"")+size+"px Arial";}
   while(ctx.measureText(text).width>width && text.length>1) text=text.slice(0,-2)+"…";
   ctx.fillText(text,x,y);
  }
  const title = item ? item.title : "Tote " + value;
- // Full-width two-line title; remaining space keeps QR clear.
- ctx.font="bold 40px Arial";
- let lines=[""];
- for(const word of title.split(/\s+/)) {
-  const ix=lines.length-1, candidate=(lines[ix]+" "+word).trim();
-  if(ctx.measureText(candidate).width>744 && lines[ix]) lines.push(word); else lines[ix]=candidate;
+ // Use up to three large, full-width title lines instead of shrinking the whole title.
+ let titleSize=item?56:76, lines=[];
+ while(titleSize>=40) {
+  ctx.font="bold "+titleSize+"px Arial";
+  lines=[""];
+  for(const word of title.split(/\s+/)) {
+   const ix=lines.length-1, candidate=(lines[ix]+" "+word).trim();
+   if(ctx.measureText(candidate).width>744 && lines[ix]) lines.push(word); else lines[ix]=candidate;
+  }
+  if(lines.length<=3) break;
+  titleSize--;
  }
- fit(lines[0],28,64,744,40,true);
- if(lines.length>1) fit(lines.slice(1).join(" "),28,116,744,38,true);
+ if(lines.length>3) lines=[lines[0],lines[1],lines.slice(2).join(" ")];
+ lines.slice(0,3).forEach((line,index)=>fit(line,28,62+(index*58),744,titleSize,true,38));
  const labelLocation = item ? (item.location || suggestedSkuLocation(item.sku) || "Unassigned") : "";
- const locationPrefix = item && !item.location && suggestedSkuLocation(item.sku) ? "Suggested: " : "Tote: ";
- fit(item ? (mode === "inventory" ? locationPrefix + labelLocation : "Item reference") : "Storage location",28,220,365,44,true);
- fit(item ? "SKU: " + (item.sku||"—") : value,28,290,365,item?32:64,!item);
- fit(item ? "eBay item number:" : "Scan to see contents",28,375,365,32);
- fit(item ? (item.ebayId||"Not linked") : "in your inventory app",28,425,365,34,true);
- fit(destination ? (mode === "public" ? "Public eBay listing" : "Private inventory · Sign-in required") : "Text only · No QR link",420,552,350,24);
- fit("Old Carpenter Inventory",28,564,365,28);
+ const locationPrefix = item && !item.location && suggestedSkuLocation(item.sku) ? "SUGGESTED " : "TOTE ";
+ fit(item ? (mode === "inventory" ? locationPrefix + labelLocation : "ITEM LABEL") : "STORAGE LOCATION",28,250,410,item?74:54,true,38);
+ fit(item ? (item.sku||"NO SKU") : value,28,338,410,item?58:112,true,40);
+ fit(item ? "EBAY " + (item.ebayId||"NOT LINKED") : "SCAN FOR TOTE CONTENTS",28,414,410,item?42:40,true,30);
+ fit("OLD CARPENTER",28,558,410,40,true,30);
+ if(destination) fit(mode === "public" ? "EBAY LISTING" : "INVENTORY",500,570,260,30,true,26);
+ else fit("TEXT ONLY",500,570,260,30,true,26);
  labelCanvas=canvas;labelFilename="Ebay_"+(item?"Item_":"Tote_")+value.replace(/[^a-z0-9_-]/gi,"_");
  $("labelPreview").src=canvas.toDataURL("image/png");$("labelDialog").showModal();
 }
