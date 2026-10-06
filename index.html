@@ -92,6 +92,10 @@ dialog::backdrop{background:#10223dc0}
 .tote small{font-size:14px}
 .problem{border-left:5px solid #d48a31;padding:16px;background:#fff7e8;margin-bottom:15px;border-radius:8px}
 .problem h3{margin-top:0}
+.duplicate-photo-group{border:2px solid #d8e0ec;border-radius:12px;padding:14px;margin:14px 0}
+.duplicate-photo-group>img{width:150px;height:150px;object-fit:contain;background:#f2f5fa;border-radius:8px}
+.duplicate-photo-choice{display:block;border-top:1px solid #d8e0ec;padding:10px 0;margin:0}
+.duplicate-photo-choice input{width:auto;margin-right:8px}
 pre{white-space:pre-wrap;font:15px/1.5 Arial;overflow-wrap:anywhere;background:#f1f5fa;padding:16px;border-radius:10px}
 footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
 .verify-compare{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0}
@@ -390,6 +394,18 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
     <input id="problemSearch" type="search" placeholder="Item name, SKU, eBay number, or tote/location">
     <p id="problemSearchCount" class="small"></p>
    </div>
+   <div class="panel">
+    <h2>Repeated Saved Photos</h2>
+    <p>
+     Find an identical uploaded photo that was accidentally saved on more than one record.
+     Review every title and SKU before removing a copy. This cleanup changes only this app; it does not change eBay or undo a physical location check.
+    </p>
+    <p class="small">For extra safety, make a full backup before removing photos. Nothing is selected automatically.</p>
+    <button id="scanDuplicatePhotos" class="secondary" type="button">Find Repeated Photos</button>
+    <p id="duplicatePhotoSummary" class="small"></p>
+    <div id="duplicatePhotoGroups"></div>
+    <button id="removeSelectedDuplicatePhotos" class="danger" type="button" hidden>Remove Selected Wrong Photos</button>
+   </div>
    <div id="problemsList"></div>
   </section>
 
@@ -451,7 +467,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <button id="floatingHome" type="button" class="primary" data-view="home" aria-label="Return to home screen" hidden>🏠 Home</button>
  </nav>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.05.8 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.05.9 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -596,11 +612,13 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <label for="checkLocation">Physical location / last known tote</label>
   <input id="checkLocation" list="toteOptions" maxlength="160" placeholder="A7">
 
-  <label class="verify-safety">
-   <input id="attachPhoto" type="checkbox">
-   Optional: save this verification photo with the selected record
-  </label>
-  <p class="small">Leave this unchecked unless the photograph definitely belongs to the title and SKU shown above.</p>
+  <div id="attachPhotoOption" hidden>
+   <label class="verify-safety">
+    <input id="attachPhoto" type="checkbox">
+    Optional: save this verification photo with the selected record
+   </label>
+   <p class="small">Leave this unchecked unless the photograph definitely belongs to the title and SKU shown above.</p>
+  </div>
 
   <p class="small">
    This records your count and today's date.
@@ -3571,6 +3589,67 @@ function renderLocations() {
  $("locationsGrid").querySelectorAll("[data-tote]").forEach(b => { b.onclick = () => openTote(b.dataset.tote); });
 }
 
+let duplicatePhotoScanDone = false;
+let duplicatePhotoReview = [];
+
+function repeatedPhotoGroups() {
+ const byPhoto = new Map();
+ state.items.forEach(item => item.photos.forEach(photo => {
+  if (!photo) return;
+  if (!byPhoto.has(photo)) byPhoto.set(photo, []);
+  byPhoto.get(photo).push(item);
+ }));
+ return [...byPhoto.entries()]
+  .filter(([, items]) => new Set(items.map(item => item.id)).size > 1)
+  .map(([photo, items]) => ({photo,items}));
+}
+
+function renderDuplicatePhotoCleanup() {
+ if (!duplicatePhotoScanDone) return;
+ const groups = repeatedPhotoGroups();
+ duplicatePhotoReview = [];
+ let html = "";
+ groups.forEach((group, groupIndex) => {
+  const choices = group.items.map(item => {
+   const reviewIndex = duplicatePhotoReview.push({itemId:item.id,photo:group.photo}) - 1;
+   return '<label class="duplicate-photo-choice"><input type="checkbox" data-duplicate-photo="' + reviewIndex + '">' +
+    '<strong>' + esc(item.title) + '</strong><br><span class="small">SKU ' + esc(item.sku || "Not recorded") +
+    ' · eBay # ' + esc(item.ebayId || "Not recorded") + ' · Location ' + esc(item.location || "Not recorded") + '</span></label>';
+  }).join("");
+  html += '<article class="duplicate-photo-group"><img src="' + esc(group.photo) + '" alt="Repeated saved photo ' + (groupIndex + 1) + '">' +
+   '<h3>Same photo saved on ' + group.items.length + ' records</h3><p class="small">Check only the records where this photo is wrong. Leave the correct record unchecked.</p>' + choices + '</article>';
+ });
+ $("duplicatePhotoSummary").textContent = groups.length ?
+  groups.length + " repeated-photo group" + (groups.length === 1 ? "" : "s") + " found. Nothing has been removed." :
+  "No identical saved photos appear on more than one record.";
+ $("duplicatePhotoGroups").innerHTML = html;
+ $("removeSelectedDuplicatePhotos").hidden = !groups.length;
+}
+
+$("scanDuplicatePhotos").onclick = () => {
+ duplicatePhotoScanDone = true;
+ renderDuplicatePhotoCleanup();
+};
+
+$("removeSelectedDuplicatePhotos").onclick = work(async () => {
+ const selected = [...$("duplicatePhotoGroups").querySelectorAll("[data-duplicate-photo]:checked")]
+  .map(box => duplicatePhotoReview[Number(box.dataset.duplicatePhoto)])
+  .filter(Boolean);
+ if (!selected.length) throw Error("Select the records where the repeated photo is wrong.");
+ if (!confirm("Remove " + selected.length + " selected saved photo " + (selected.length === 1 ? "copy" : "copies") + "? This changes only this app. It does not change eBay or undo any physical location checks.")) return;
+ const next = copy(state);
+ selected.forEach(entry => {
+  const item = next.items.find(candidate => candidate.id === entry.itemId);
+  if (!item) return;
+  item.photos = item.photos.filter(photo => photo !== entry.photo);
+  item.notes = appendActivity(item.notes,"A repeated saved photo was removed during photo cleanup.");
+  item.updatedAt = stamp();
+ });
+ await commit(next);
+ renderDuplicatePhotoCleanup();
+ notify(selected.length + " wrong saved photo " + (selected.length === 1 ? "copy was" : "copies were") + " removed. Physical checks and eBay listings were unchanged.");
+});
+
 function renderProblems() {
  const problemRows = state.items.filter(x => issues(x).length);
  const query = $("problemSearch").value.trim();
@@ -3590,6 +3669,7 @@ function renderProblems() {
   '<p class="empty">No issues found in saved records. This is not a live eBay audit.</p>');
 
  bindCards($("problemsList"));
+ renderDuplicatePhotoCleanup();
 }
 
 function previewPhotos() {
@@ -3730,13 +3810,15 @@ function openCheck(id) {
 
  const listingPhoto = (x.ebayId ? liveListingById.get(x.ebayId)?.gallery_url : "") ||
   savedEbayImageById.get(x.ebayId) || x.photos[0] || "";
- $("checkComparison").hidden = !verifyPhoto;
- $("checkVerifyPhoto").src = verifyPhoto || "";
+ const hasFreshVerificationPhoto = currentView === "verify" && Boolean(verifyPhoto);
+ $("checkComparison").hidden = !hasFreshVerificationPhoto;
+ $("checkVerifyPhoto").src = hasFreshVerificationPhoto ? verifyPhoto : "";
  $("checkListingPhotoBox").hidden = !listingPhoto;
  $("checkListingPhoto").src = listingPhoto;
  $("checkIdentity").checked = false;
 
- $("attachPhoto").disabled = !verifyPhoto;
+ $("attachPhotoOption").hidden = !hasFreshVerificationPhoto;
+ $("attachPhoto").disabled = !hasFreshVerificationPhoto;
  $("attachPhoto").checked = false;
  $("checker").showModal();
 }
@@ -4006,7 +4088,7 @@ $("checkForm").onsubmit = work(async e => {
  if (qty === null) throw Error("Enter the number you physically counted.");
  if (qty > 0 && !location) throw Error("Enter the item's physical location.");
 
- const addVerificationPhoto = $("attachPhoto").checked && verifyPhoto && !x.photos.includes(verifyPhoto);
+ const addVerificationPhoto = currentView === "verify" && $("attachPhoto").checked && verifyPhoto && !x.photos.includes(verifyPhoto);
  if (addVerificationPhoto && !confirm("Save this photograph with " + x.title + " (SKU " + (x.sku || "not recorded") + ")? Choose Cancel if the photograph and listing do not describe the same item.")) return;
  if (addVerificationPhoto && x.photos.length >= 12) {
   throw Error(
