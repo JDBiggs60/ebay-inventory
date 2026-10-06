@@ -113,6 +113,12 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
 }
 .location-confirmed{display:inline-block;background:#dff3e4;color:#15562a;padding:5px 9px;border-radius:8px;font-size:14px;font-weight:bold}.location-unverified{display:inline-block;background:#fff0d2;color:#744800;padding:5px 9px;border-radius:8px;font-size:14px;font-weight:bold}
 .inventory-filters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:18px 0}.inventory-filters input,.inventory-filters select{width:100%;min-width:0}.inventory-filters label{font-size:16px;margin-top:0}.inventory-filters .filter-search{grid-column:1/-1}@media(max-width:600px){.inventory-filters{grid-template-columns:1fr}}
+/* Keep navigation within reach on long inventory and tote pages. */
+.floating-navigation{position:fixed;right:14px;bottom:calc(14px + env(safe-area-inset-bottom,0px));z-index:50;display:flex;gap:8px}
+.floating-navigation button{min-height:48px;padding:10px 15px;font-weight:bold;box-shadow:0 3px 12px #10223d40;border:1px solid #fff}
+.floating-navigation .secondary{background:#fff}
+#application>footer{padding-bottom:calc(96px + env(safe-area-inset-bottom,0px))}
+@media print{.floating-navigation{display:none!important}}
 </style>
 </head>
 <body>
@@ -435,7 +441,12 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
 
  </main>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.05.6 · Independent personal inventory app</footer>
+ <nav id="floatingNavigation" class="floating-navigation" aria-label="Page navigation" hidden>
+  <button id="floatingTop" type="button" class="secondary" aria-label="Back to top of this page" hidden>↑ Top</button>
+  <button id="floatingHome" type="button" class="primary" data-view="home" aria-label="Return to home screen" hidden>🏠 Home</button>
+ </nav>
+
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.05.7 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -3234,6 +3245,19 @@ async function commit(next) {
  renderAll();
 }
 
+function updateFloatingNavigation() {
+ const signedIn = !$("application").hidden;
+ const scrolled = window.scrollY > 300;
+ $("floatingTop").hidden = !signedIn || !scrolled;
+ $("floatingHome").hidden = !signedIn || currentView === "home";
+ $("floatingNavigation").hidden = !signedIn || (!scrolled && currentView === "home");
+}
+window.addEventListener("scroll", updateFloatingNavigation, {passive: true});
+$("floatingTop").onclick = () => {
+ window.scrollTo({top: 0, left: 0, behavior: "instant"});
+ updateFloatingNavigation();
+};
+
 function show(view) {
  currentView = view;
  document.querySelectorAll("main>section").forEach(s => {
@@ -3242,6 +3266,7 @@ function show(view) {
  $("back").hidden = view === "home";
  window.scrollTo(0, 0);
  renderAll();
+ updateFloatingNavigation();
 }
 
 function searchItems(query, items = state.items) {
@@ -4664,6 +4689,7 @@ async function start() {
 
  $("loading").hidden = true;
  $("application").hidden = false;
+ updateFloatingNavigation();
  openQrDestination();
  try { await finishEbayReturn(); await checkEbayConnection(); }
  catch(e) { $("ebayConnectionBadge").textContent="Setup or check needed"; $("ebayConnectionMessage").textContent=e.message; notify(e.message,true); }
