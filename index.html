@@ -436,10 +436,21 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
     </div>
 
     <p id="backupSummary" class="small"></p>
-    <p class="small">
+   <p class="small">
      CSV is a spreadsheet copy and does not include photos.
      Use the JSON backup to transfer test records between phone and computer.
     </p>
+   </div>
+
+   <div class="panel">
+    <h2>Completely Start Over</h2>
+    <p>
+     This permanently removes every saved inventory record, uploaded item photo, physical count, location confirmation, note and tote correction from this app.
+     It cannot edit or remove an eBay listing.
+    </p>
+    <p class="small">Download a full backup first. After the reset, use eBay Connection → Refresh Active Listings from eBay to build a fresh inventory.</p>
+    <button id="resetInventory" class="danger" type="button" disabled>Erase App Inventory and Start Over</button>
+    <p id="resetInventoryStatus" class="small">Download Full Backup above to unlock this button.</p>
    </div>
 
    <div class="panel">
@@ -467,7 +478,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <button id="floatingHome" type="button" class="primary" data-view="home" aria-label="Return to home screen" hidden>🏠 Home</button>
  </nav>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.05.9 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.05.10 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -3124,6 +3135,7 @@ let pendingLiveReview = null;
 let liveListingById = new Map();
 let savedEbayImageById = new Map();
 let locked = false;
+let backupDownloadedThisSession = false;
 let currentView = "home";
 const viewScrollPositions = Object.create(null);
 let ignoreScrollMemory = false;
@@ -4359,9 +4371,37 @@ $("backupDownload").onclick = work(async () => {
   "application/json"
  );
 
+ backupDownloadedThisSession = true;
+ $("resetInventory").disabled = false;
+ $("resetInventoryStatus").textContent = "Backup requested. Confirm that the JSON file appears in Downloads or Files before continuing.";
+
  notify(
   "Backup download requested. Check that the JSON file is in your Downloads or Files app."
  );
+});
+
+$("resetInventory").onclick = work(async () => {
+ if (!backupDownloadedThisSession) throw Error("Download a full backup before starting over.");
+ if (!state.items.length) throw Error("The app inventory is already empty.");
+ if (!confirm("Erase all " + state.items.length + " saved records and their app photos? Physical checks, notes and tote corrections will also be erased. Your eBay listings will remain unchanged.")) return;
+ const phrase = prompt("This cannot be undone without restoring the backup. Type START OVER to erase the app inventory. Your eBay listings will remain unchanged.");
+ if (phrase !== "START OVER") {
+  notify("Start-over cancelled. Nothing was erased.");
+  return;
+ }
+ await commit({revision:state.revision,items:[],importedAt:""});
+ pendingImport = null;
+ pendingLiveReview = null;
+ liveListingById = new Map();
+ savedEbayImageById = new Map();
+ verifyPhoto = "";
+ photoMatchIds = [];
+ photoAnalysis = null;
+ backupDownloadedThisSession = false;
+ $("resetInventory").disabled = true;
+ $("resetInventoryStatus").textContent = "App inventory erased. Go to eBay Connection and refresh active listings to rebuild it.";
+ notify("The app inventory is empty. No eBay listing was changed. Use eBay Connection to load a fresh active-listings inventory.");
+ showView("home");
 });
 
 let pendingRestore = null;
