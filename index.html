@@ -416,7 +416,11 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
     <div id="duplicatePhotoGroups"></div>
     <button id="removeSelectedDuplicatePhotos" class="danger" type="button" hidden>Remove Selected Wrong Photos</button>
    </div>
-   <div id="problemsList"></div>
+   <div class="panel">
+    <h2>Missing Locations and Other Inventory Problems</h2>
+    <p class="small"><strong>These are not repeated-photo results.</strong> Items appear here for reasons such as a missing location, an unverified physical count, a quantity difference, or another saved-record warning.</p>
+    <div id="problemsList"></div>
+   </div>
   </section>
 
   <section id="inventoryReport" hidden><h2>Saved Inventory Summary</h2><p>This reports saved records, not live eBay listings or sales. Prices are asking prices, not profit.</p><div id="inventoryReportBody"></div><button id="summaryCsv" class="secondary">Export Saved Inventory CSV</button></section>
@@ -488,7 +492,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <button id="floatingHome" type="button" class="primary" data-view="home" aria-label="Return to home screen" hidden>🏠 Home</button>
  </nav>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.06.13 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.06.14 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
