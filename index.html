@@ -94,6 +94,10 @@ dialog::backdrop{background:#10223dc0}
 .problem h3{margin-top:0}
 pre{white-space:pre-wrap;font:15px/1.5 Arial;overflow-wrap:anywhere;background:#f1f5fa;padding:16px;border-radius:10px}
 footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
+.verify-compare{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0}
+.verify-compare>div{border:1px solid #dbe4ef;border-radius:12px;padding:10px;background:#f7f9fc}
+.verify-compare img{display:block;width:100%;height:190px;object-fit:contain;background:#eef3f9;border-radius:8px;margin-top:7px}
+.verify-safety{background:#fff4d8;border:2px solid #d68a23;border-radius:12px;padding:12px;margin:15px 0}
 @media(max-width:700px){
  .home-grid{grid-template-columns:1fr 1fr;gap:12px}
  .home-card{padding:17px;min-height:190px}
@@ -110,6 +114,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
  .item-photo{height:210px}
  .actions .button,.actions button{flex:1}
  dialog{padding:18px}
+ .verify-compare{grid-template-columns:1fr}
 }
 .location-confirmed{display:inline-block;background:#dff3e4;color:#15562a;padding:5px 9px;border-radius:8px;font-size:14px;font-weight:bold}.location-unverified{display:inline-block;background:#fff0d2;color:#744800;padding:5px 9px;border-radius:8px;font-size:14px;font-weight:bold}
 .inventory-filters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:18px 0}.inventory-filters input,.inventory-filters select{width:100%;min-width:0}.inventory-filters label{font-size:16px;margin-top:0}.inventory-filters .filter-search{grid-column:1/-1}@media(max-width:600px){.inventory-filters{grid-template-columns:1fr}}
@@ -446,7 +451,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <button id="floatingHome" type="button" class="primary" data-view="home" aria-label="Return to home screen" hidden>🏠 Home</button>
  </nav>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.05.7 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.05.8 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -572,6 +577,18 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <p id="checkHint" class="small"></p>
   <input id="checkId" type="hidden">
 
+  <div id="checkComparison" hidden>
+   <div class="verify-compare">
+    <div><strong>Physical item photo</strong><img id="checkVerifyPhoto" alt="Photo just taken of the physical item"></div>
+    <div id="checkListingPhotoBox"><strong>Saved listing photo</strong><img id="checkListingPhoto" alt="Saved photo for the selected listing"></div>
+   </div>
+  </div>
+
+  <label class="verify-safety">
+   <input id="checkIdentity" type="checkbox" required>
+   I compared the physical item with the listing title and SKU, and they describe the same item.
+  </label>
+
   <label for="checkQty">Quantity physically counted *</label>
   <input id="checkQty" type="number" required min="0" max="99999999"
    step="1" placeholder="Enter the count you just checked">
@@ -579,10 +596,11 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <label for="checkLocation">Physical location / last known tote</label>
   <input id="checkLocation" list="toteOptions" maxlength="160" placeholder="A7">
 
-  <label>
+  <label class="verify-safety">
    <input id="attachPhoto" type="checkbox">
-   Save the verification photo with this record
+   Optional: save this verification photo with the selected record
   </label>
+  <p class="small">Leave this unchecked unless the photograph definitely belongs to the title and SKU shown above.</p>
 
   <p class="small">
    This records your count and today's date.
@@ -3089,6 +3107,8 @@ let liveListingById = new Map();
 let savedEbayImageById = new Map();
 let locked = false;
 let currentView = "home";
+const viewScrollPositions = Object.create(null);
+let ignoreScrollMemory = false;
 
 const stamp = () => new Date().toISOString();
 const money = v => v === null ? "Price unknown" :
@@ -3252,21 +3272,30 @@ function updateFloatingNavigation() {
  $("floatingHome").hidden = !signedIn || currentView === "home";
  $("floatingNavigation").hidden = !signedIn || (!scrolled && currentView === "home");
 }
-window.addEventListener("scroll", updateFloatingNavigation, {passive: true});
+window.addEventListener("scroll", () => {
+ if (!ignoreScrollMemory) viewScrollPositions[currentView] = window.scrollY;
+ updateFloatingNavigation();
+}, {passive: true});
 $("floatingTop").onclick = () => {
- window.scrollTo({top: 0, left: 0, behavior: "instant"});
+ viewScrollPositions[currentView] = 0;
+ window.scrollTo({top: 0, left: 0, behavior: "smooth"});
  updateFloatingNavigation();
 };
 
 function show(view) {
+ viewScrollPositions[currentView] = window.scrollY;
+ ignoreScrollMemory = true;
  currentView = view;
  document.querySelectorAll("main>section").forEach(s => {
   s.hidden = s.id !== view;
  });
  $("back").hidden = view === "home";
- window.scrollTo(0, 0);
  renderAll();
- updateFloatingNavigation();
+ requestAnimationFrame(() => {
+  window.scrollTo({top: viewScrollPositions[view] || 0, left: 0, behavior: "auto"});
+  updateFloatingNavigation();
+  requestAnimationFrame(() => { ignoreScrollMemory = false; });
+ });
 }
 
 function searchItems(query, items = state.items) {
@@ -3300,6 +3329,21 @@ function invalidateMovedLocation(draft, previous) {
  if (previous && draft.location.trim().toLowerCase() !== previous.location.trim().toLowerCase()) draft.checkedAt = '';
  return draft;
 }
+function skuIdentity(sku) {
+ const parts = String(sku || "").toUpperCase().match(/[A-Z]+|\d+/g);
+ if (!parts) return "";
+ return parts.map(part => /^\d+$/.test(part) ? part.replace(/^0+(?=\d)/, "") : part).join("|");
+}
+
+function duplicateSkuCount(x) {
+ const key = skuIdentity(x.sku);
+ return key ? state.items.filter(y => y.id !== x.id && skuIdentity(y.sku) === key).length : 0;
+}
+
+function duplicateEbayCount(x) {
+ return x.ebayId ? state.items.filter(y => y.id !== x.id && y.ebayId === x.ebayId).length : 0;
+}
+
 function issues(x) {
  const a = [];
 
@@ -3308,6 +3352,12 @@ function issues(x) {
  if (!x.location) a.push("Location missing");
  else if (!locationConfirmed(x)) a.push("Location not verified");
  if (x.status === "Unknown") a.push("Listing status unknown");
+
+ const repeatedSku = duplicateSkuCount(x);
+ if (repeatedSku) a.push("Possible duplicate SKU / custom label; also used by " + repeatedSku + " other record" + (repeatedSku === 1 ? "" : "s"));
+
+ const repeatedEbay = duplicateEbayCount(x);
+ if (repeatedEbay) a.push("Duplicate eBay item number; also used by " + repeatedEbay + " other record" + (repeatedEbay === 1 ? "" : "s"));
 
  if (x.status === "Active" && !x.ebayId) {
   a.push("Active record needs an eBay number");
@@ -3373,6 +3423,7 @@ function card(x, verify = false) {
   (!verify ?
    '<button class="secondary" data-match="' + esc(x.id) +
    '">Confirm location / stock</button>' : "") +
+  (!verify && x.checkedAt ? '<button class="secondary" data-unverify="' + esc(x.id) + '">Undo physical check</button>' : '') +
   (!verify ? '<button class="secondary" data-move="' + esc(x.id) + '">Move to another tote</button>' : '') +
   (!verify && !x.ebayId ? '<button class="secondary" data-combine="' + esc(x.id) + '">Combine with eBay listing</button>' : '') +
   '</div></div></article>';
@@ -3380,6 +3431,7 @@ function card(x, verify = false) {
 
 function bindCards(el) {
  el.querySelectorAll("[data-move]").forEach(b => { b.onclick = () => openMove(b.dataset.move); });
+ el.querySelectorAll("[data-unverify]").forEach(b => { b.onclick = work(() => undoPhysicalCheck(b.dataset.unverify)); });
  el.querySelectorAll("[data-combine]").forEach(b => {
   b.onclick = () => openMerge(b.dataset.combine);
  });
@@ -3672,12 +3724,37 @@ function openCheck(id) {
  $("checkQty").value = "";
 
  $("checkHint").textContent = "Saved status: " + x.status +
+  " · SKU: " + (x.sku || "Not recorded") +
   " · Listing quantity: " + (x.listingQty ?? "Unknown") +
   ". Count sets as one when the listing sells a pair.";
+
+ const listingPhoto = (x.ebayId ? liveListingById.get(x.ebayId)?.gallery_url : "") ||
+  savedEbayImageById.get(x.ebayId) || x.photos[0] || "";
+ $("checkComparison").hidden = !verifyPhoto;
+ $("checkVerifyPhoto").src = verifyPhoto || "";
+ $("checkListingPhotoBox").hidden = !listingPhoto;
+ $("checkListingPhoto").src = listingPhoto;
+ $("checkIdentity").checked = false;
 
  $("attachPhoto").disabled = !verifyPhoto;
  $("attachPhoto").checked = false;
  $("checker").showModal();
+}
+
+async function undoPhysicalCheck(id) {
+ const x = state.items.find(x => x.id === id);
+ if (!x || !x.checkedAt) return;
+ if (!confirm("Undo the physical confirmation for " + x.title + "? Its location will stay as a suggestion, but it will return to Not verified. Saved photos are kept until you remove them in View / Edit.")) return;
+
+ const updated = normalizeItem({
+  ...x,
+  physicalQty: null,
+  checkedAt: "",
+  notes: appendActivity(x.notes,"Physical confirmation undone. Location requires a new physical check."),
+  updatedAt: stamp()
+ });
+ await mergeItems([updated]);
+ notify("Physical confirmation undone. Remove any incorrect photo with View / Edit.");
 }
 
 async function compressPhoto(file) {
@@ -3925,10 +4002,12 @@ $("checkForm").onsubmit = work(async e => {
  const qty = numberOrNull($("checkQty").value, true);
  const location = $("checkLocation").value.trim();
 
+ if (!$("checkIdentity").checked) throw Error("Confirm that the physical item matches the listing title and SKU before saving.");
  if (qty === null) throw Error("Enter the number you physically counted.");
  if (qty > 0 && !location) throw Error("Enter the item's physical location.");
 
  const addVerificationPhoto = $("attachPhoto").checked && verifyPhoto && !x.photos.includes(verifyPhoto);
+ if (addVerificationPhoto && !confirm("Save this photograph with " + x.title + " (SKU " + (x.sku || "not recorded") + ")? Choose Cancel if the photograph and listing do not describe the same item.")) return;
  if (addVerificationPhoto && x.photos.length >= 12) {
   throw Error(
    "This record already has 12 photos. Remove a photo before adding another."
@@ -3999,7 +4078,40 @@ function matchWords(value) {
  return String(value || "").toLowerCase().match(/[a-z0-9]+/g) || [];
 }
 
+function normalizedStickerNumber(value) {
+ const digits = String(value || "").replace(/\D/g, "");
+ return digits ? digits.replace(/^0+(?=\d)/, "") : "";
+}
+
+function detectedStickerNumbers(analysis) {
+ const sources = [...(analysis.identifiers || []), ...(analysis.visible_text || [])];
+ const found = [];
+ for (const source of sources) {
+  for (const match of String(source || "").matchAll(/(?:^|\D)(\d{3,6})(?=\D|$)/g)) {
+   const normalized = normalizedStickerNumber(match[1]);
+   if (normalized) found.push(normalized);
+  }
+ }
+ return [...new Set(found)];
+}
+
+function skuStickerNumbers(sku) {
+ return (String(sku || "").match(/\d+/g) || [])
+  .filter(value => value.length >= 3 && value.length <= 6)
+  .map(normalizedStickerNumber).filter(Boolean);
+}
+
 function rankPhotoMatches(analysis) {
+ const stickerNumbers = detectedStickerNumbers(analysis);
+ if (stickerNumbers.length) {
+  const exact = state.items.filter(item =>
+   skuStickerNumbers(item.sku).some(number => stickerNumbers.includes(number))
+  );
+  if (exact.length) {
+   return exact.sort((a,b) => a.sku.localeCompare(b.sku,undefined,{numeric:true})).slice(0,12).map(x => x.id);
+  }
+ }
+
  const phrases = [analysis.name, analysis.brand, analysis.model, ...(analysis.visible_text || []), ...(analysis.identifiers || []), ...(analysis.search_terms || [])]
   .map(x => String(x || "").trim()).filter(Boolean);
  const signalWords = matchWords(phrases.join(" ")).filter(w => w.length > 2 && !["the","and","with","for","item","product","unknown"].includes(w));
@@ -4014,7 +4126,7 @@ function rankPhotoMatches(analysis) {
   for (const phrase of compactSignals) if (compact.includes(phrase) || (itemSku.length >= 3 && phrase.includes(itemSku))) score += 35;
   if (analysis.name && item.title.toLowerCase().includes(String(analysis.name).toLowerCase())) score += 50;
   return {item,score};
- }).filter(x => x.score > 0).sort((a,b) => b.score-a.score || a.item.title.localeCompare(b.item.title)).slice(0,12).map(x => x.item.id);
+ }).filter(x => x.score >= 8).sort((a,b) => b.score-a.score || a.item.title.localeCompare(b.item.title)).slice(0,12).map(x => x.item.id);
 }
 
 async function identifyVerifyPhoto() {
@@ -4033,9 +4145,10 @@ async function identifyVerifyPhoto() {
   if (!response.ok) throw Error(data.error || "Photo identification is unavailable. Try again.");
   photoAnalysis = data;
   photoMatchIds = rankPhotoMatches(data);
+  const stickerNumbers = detectedStickerNumbers(data);
   const found = [data.name,data.brand,data.model].filter(Boolean).join(" · ") || "No definite product name found";
   const markings = [...(data.visible_text || []),...(data.identifiers || [])].filter(Boolean).slice(0,8).join(", ");
-  $("photoResult").textContent = "Photo suggests: " + found + (markings ? "\nVisible markings: " + markings : "") + "\n" + (photoMatchIds.length ? "Likely saved matches are shown below." : "No likely saved match was found. Try a clearer photo or type one visible word below.");
+  $("photoResult").textContent = "Photo suggests: " + found + (markings ? "\nVisible markings: " + markings : "") + (stickerNumbers.length ? "\nPossible sticker number: " + stickerNumbers.join(", ") : "") + "\n" + (photoMatchIds.length ? "Possible saved matches are shown below. Confirm only when the physical item, title and SKU agree." : "No reliable saved match was found. Type the sticker number or a distinctive word below.");
   renderMatches();
  } finally {
   $("analyzePhoto").disabled = false;
