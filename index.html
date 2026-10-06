@@ -478,7 +478,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <button id="floatingHome" type="button" class="primary" data-view="home" aria-label="Return to home screen" hidden>🏠 Home</button>
  </nav>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.05.11 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.05.12 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -3453,6 +3453,7 @@ function card(x, verify = false) {
   (!verify ?
    '<button class="secondary" data-match="' + esc(x.id) +
    '">Confirm location / stock</button>' : "") +
+  (!verify ? '<button class="secondary" data-card-label="' + esc(x.id) + '">Print Item Label</button>' : '') +
   (!verify && x.checkedAt ? '<button class="secondary" data-unverify="' + esc(x.id) + '">Undo physical check</button>' : '') +
   (!verify ? '<button class="secondary" data-move="' + esc(x.id) + '">Move to another tote</button>' : '') +
   (!verify && !x.ebayId ? '<button class="secondary" data-combine="' + esc(x.id) + '">Combine with eBay listing</button>' : '') +
@@ -3461,6 +3462,13 @@ function card(x, verify = false) {
 
 function bindCards(el) {
  el.querySelectorAll("[data-move]").forEach(b => { b.onclick = () => openMove(b.dataset.move); });
+ el.querySelectorAll("[data-card-label]").forEach(b => {
+  b.onclick = work(() => {
+   const item = state.items.find(x => x.id === b.dataset.cardLabel);
+   if (!item) throw Error("This item is no longer in the saved inventory. Tap Refresh and try again.");
+   makeLabel(item,"");
+  });
+ });
  el.querySelectorAll("[data-unverify]").forEach(b => { b.onclick = work(() => undoPhysicalCheck(b.dataset.unverify)); });
  el.querySelectorAll("[data-combine]").forEach(b => {
   b.onclick = () => openMerge(b.dataset.combine);
@@ -4536,7 +4544,9 @@ function makeLabel(item, tote, mode = "inventory") {
  }
  fit(lines[0],28,64,744,40,true);
  if(lines.length>1) fit(lines.slice(1).join(" "),28,116,744,38,true);
- fit(item ? (mode === "inventory" ? "Tote: " + (item.location||"Unassigned") : "Item reference") : "Storage location",28,220,365,44,true);
+ const labelLocation = item ? (item.location || suggestedSkuLocation(item.sku) || "Unassigned") : "";
+ const locationPrefix = item && !item.location && suggestedSkuLocation(item.sku) ? "Suggested: " : "Tote: ";
+ fit(item ? (mode === "inventory" ? locationPrefix + labelLocation : "Item reference") : "Storage location",28,220,365,44,true);
  fit(item ? "SKU: " + (item.sku||"—") : value,28,290,365,item?32:64,!item);
  fit(item ? "eBay item number:" : "Scan to see contents",28,375,365,32);
  fit(item ? (item.ebayId||"Not linked") : "in your inventory app",28,425,365,34,true);
