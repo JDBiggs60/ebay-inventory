@@ -478,7 +478,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <button id="floatingHome" type="button" class="primary" data-view="home" aria-label="Return to home screen" hidden>🏠 Home</button>
  </nav>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.05.10 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.05.11 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -4401,7 +4401,7 @@ $("resetInventory").onclick = work(async () => {
  $("resetInventory").disabled = true;
  $("resetInventoryStatus").textContent = "App inventory erased. Go to eBay Connection and refresh active listings to rebuild it.";
  notify("The app inventory is empty. No eBay listing was changed. Use eBay Connection to load a fresh active-listings inventory.");
- showView("home");
+ show("home");
 });
 
 let pendingRestore = null;
