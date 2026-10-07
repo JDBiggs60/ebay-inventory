@@ -511,7 +511,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <button id="floatingHome" type="button" class="primary" data-view="home" aria-label="Return to home screen" hidden>🏠 Home</button>
  </nav>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.07.20 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.07.21 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -4689,7 +4689,7 @@ function labelUrl(key, value) {
 }
 function showSignedOutPage(ownerLogin = false) {
  const params = new URLSearchParams(location.hash.slice(1));
- const customer = !ownerLogin && (params.has("item") || params.has("tote"));
+ const customer = !ownerLogin && (params.has("item") || params.has("tote") || params.has("e") || params.has("t"));
  $("loading").hidden = true;
  $("application").hidden = true;
  $("customerThanks").hidden = !customer;
@@ -4703,15 +4703,21 @@ $("ownerSignIn").onclick = () => {
 function openQrDestination() {
  if (!accountId) { showSignedOutPage(); return; }
  const params = new URLSearchParams(location.hash.slice(1));
- if (params.has("item")) {
+ if (params.has("e")) {
+  const ebayId = params.get("e");
+  const item = state.items.find(x=>x.ebayId===ebayId);
+  show("inventory");
+  if (item) openEditor(item.id);
+  else notify("This QR item's eBay number is not in the signed-in inventory. Check the account or whether it was archived.",true);
+ } else if (params.has("item")) {
   const id = params.get("item");
   show("inventory");
   if (state.items.some(x=>x.id===id)) openEditor(id);
   else notify("This QR item's record is not in the signed-in inventory. Check the account or whether it was removed.",true);
- } else if (params.has("tote")) {
+ } else if (params.has("t") || params.has("tote")) {
   $("search").value = ""; $("statusFilter").value = "";
    $("locationFilter").value = "";
-  openTote(params.get("tote"));
+  openTote(params.get("t") || params.get("tote"));
  }
 }
 window.addEventListener("hashchange",openQrDestination);
@@ -4724,17 +4730,22 @@ function makeLabel(item, tote, mode = "inventory") {
  const value = item ? item.id : tote.trim();
  if (!value) throw Error("Enter a tote name first.");
  if (!/^https?:$/.test(location.protocol)) throw Error("Open the hosted app before making QR labels.");
- const qr = qrcode(0,"M");
- const destination = mode === "text" ? "" : mode === "public" ? "https://www.ebay.com/itm/" + item.ebayId : labelUrl(item ? "item" : "tote", value);
+ const qr = qrcode(0,"L");
+ const inventoryKey = item ? (item.ebayId ? "e" : "item") : "t";
+ const inventoryValue = item ? (item.ebayId || value) : value;
+ const destination = mode === "text" ? "" : mode === "public" ? "https://www.ebay.com/itm/" + item.ebayId : labelUrl(inventoryKey, inventoryValue);
  $("labelDestination").textContent = destination ? "QR opens: " + destination : "No QR or app link. Printed details remain readable.";
  if (destination) { qr.addData(destination); qr.make(); }
  const canvas = document.createElement("canvas"); canvas.width = 800; canvas.height = 600;
  const ctx = canvas.getContext("2d"); ctx.fillStyle="white";ctx.fillRect(0,0,800,600);ctx.fillStyle="black";
- // A 40 x 30 mm label is small. Reserve the upper third for a large title,
- // then make the tote and SKU the largest text while keeping a 14–15 mm QR.
- const count = destination ? qr.getModuleCount() : 0, cell = Math.floor(292/(count+8));
- const originX=480+Math.floor((292-(count+8)*cell)/2)+4*cell;
- const originY=270+Math.floor((292-(count+8)*cell)/2)+4*cell;
+ // Use a short inventory link, low-density QR and a full four-module white border.
+ // Larger individual squares print much more reliably on the M220 thermal printer.
+ const count = destination ? qr.getModuleCount() : 0, qrBox = 400;
+ const cell = count ? Math.floor(qrBox/(count+8)) : 0;
+ const qrLeft = 392, qrTop = 186;
+ const originX=qrLeft+Math.floor((qrBox-(count+8)*cell)/2)+4*cell;
+ const originY=qrTop+Math.floor((qrBox-(count+8)*cell)/2)+4*cell;
+ if (destination) { ctx.fillStyle="white";ctx.fillRect(qrLeft,qrTop,qrBox,qrBox);ctx.fillStyle="black"; }
  for(let y=0;y<count;y++) for(let x=0;x<count;x++) if(qr.isDark(y,x)) ctx.fillRect(originX+x*cell,originY+y*cell,cell,cell);
  function fit(text,x,y,width,size,bold=false,minSize=28) {
   text=String(text);ctx.font=(bold?"bold ":"")+size+"px Arial";
@@ -4759,12 +4770,11 @@ function makeLabel(item, tote, mode = "inventory") {
  lines.slice(0,3).forEach((line,index)=>fit(line,28,70+(index*68),744,titleSize,true,42));
  const labelLocation = item ? (item.location || suggestedSkuLocation(item.sku) || "Unassigned") : "";
  const locationPrefix = item && !item.location && suggestedSkuLocation(item.sku) ? "SUGGESTED " : "TOTE ";
- fit(item ? (mode === "inventory" ? locationPrefix + labelLocation : "ITEM LABEL") : "STORAGE LOCATION",28,286,424,item?96:62,true,50);
- fit(item ? (item.sku||"NO SKU") : value,28,394,424,item?76:126,true,46);
- fit(item ? "EBAY " + (item.ebayId||"NOT LINKED") : "SCAN FOR TOTE CONTENTS",28,478,424,item?48:42,true,34);
- fit("OLD CARPENTER",28,566,424,38,true,32);
- if(destination) fit(mode === "public" ? "EBAY LISTING" : "INVENTORY",500,584,260,32,true,28);
- else fit("TEXT ONLY",500,584,260,32,true,28);
+ fit(item ? (mode === "inventory" ? locationPrefix + labelLocation : "ITEM LABEL") : "STORAGE LOCATION",28,286,350,item?96:62,true,50);
+ fit(item ? (item.sku||"NO SKU") : value,28,394,350,item?76:126,true,46);
+ fit(item ? "EBAY " + (item.ebayId||"NOT LINKED") : "SCAN FOR TOTE CONTENTS",28,478,350,item?48:42,true,34);
+ fit("OLD CARPENTER",28,566,350,38,true,32);
+ if(!destination) fit("TEXT ONLY",500,584,260,32,true,28);
  labelCanvas=canvas;labelFilename="Ebay_"+(item?"Item_":"Tote_")+value.replace(/[^a-z0-9_-]/gi,"_");
  $("labelPreview").src=canvas.toDataURL("image/png");$("labelDialog").showModal();
 }
