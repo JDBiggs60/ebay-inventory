@@ -122,6 +122,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
 }
 .location-confirmed{display:inline-block;background:#dff3e4;color:#15562a;padding:5px 9px;border-radius:8px;font-size:14px;font-weight:bold}.location-unverified{display:inline-block;background:#fff0d2;color:#744800;padding:5px 9px;border-radius:8px;font-size:14px;font-weight:bold}
 .audit-panel{border:3px solid #2463bd;background:#eef6ff}.audit-good{background:#dff3e4;color:#15562a;border-radius:10px;padding:12px;font-weight:bold}.audit-warning{background:#fff0d2;color:#744800;border-radius:10px;padding:12px}.stock-warning{display:inline-block;background:#fde1df;color:#8a1f17;padding:5px 9px;border-radius:8px;font-size:14px;font-weight:bold;margin-left:6px}
+.ebay-review-warning{background:#fff0d2;border:2px solid #d48a31;color:#6d4300;border-radius:10px;padding:12px;margin:12px 0;font-weight:bold}
 .inventory-filters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:18px 0}.inventory-filters input,.inventory-filters select{width:100%;min-width:0}.inventory-filters label{font-size:16px;margin-top:0}.inventory-filters .filter-search{grid-column:1/-1}@media(max-width:600px){.inventory-filters{grid-template-columns:1fr}}
 /* Keep navigation within reach on long inventory and tote pages. */
 .floating-navigation{position:fixed;right:14px;bottom:calc(14px + env(safe-area-inset-bottom,0px));z-index:50;display:flex;gap:8px}
@@ -344,7 +345,8 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
     <p class="small">
      Imported reports do not change your eBay listings.
      Items missing from a report retain their previous saved status and are moved into the
-     Not Found review section; absence is not treated as proof of a sale.
+     Not Found review section. Choose Item Is Here — Needs Relisting or Item Is Gone — Archive;
+     absence alone is never treated as proof of a sale.
     </p>
     <a class="button secondary" href="https://www.ebay.com/sh/ovw"
      target="_blank" rel="noopener noreferrer">Open Seller Hub</a>
@@ -415,8 +417,8 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
     <p id="problemSearchCount" class="small"></p>
    </div>
    <div class="panel">
-    <h2>Not Found in Latest eBay Refresh or Import</h2>
-    <p>These records were preserved because a missing listing does not prove it sold or ended. Check Seller Hub before changing the saved status.</p>
+    <h2>Not in Current Active eBay Listings</h2>
+    <p>These records were preserved because a missing active listing does not prove what happened. After checking the physical item and Seller Hub, choose whether the item is here and needs relisting or is gone and should be archived.</p>
     <p id="notFoundSummary" class="small"></p>
     <div id="notFoundList"></div>
    </div>
@@ -509,7 +511,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <button id="floatingHome" type="button" class="primary" data-view="home" aria-label="Return to home screen" hidden>🏠 Home</button>
  </nav>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.06.19 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.07.20 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -3474,11 +3476,52 @@ function notFoundInLatestEbay(x) {
  return /^Not Found in Latest eBay (Refresh|Import)$/.test(x.source || "");
 }
 
+function needsInactiveReview(x) {
+ return Boolean(x.ebayId && (x.status === "Active" || notFoundInLatestEbay(x)));
+}
+
+async function resolveInactiveListing(id, resolution) {
+ const item = state.items.find(x => x.id === id);
+ if (!item) throw Error("This record is no longer available. Tap Refresh and try again.");
+ if (!notFoundInLatestEbay(item)) throw Error("This record is no longer waiting for an inactive-listing decision.");
+
+ const time = stamp();
+ if (resolution === "here") {
+  if (!confirm("Confirm that this physical item is here and should be relisted? The app will mark the saved eBay listing Ended, keep the item in inventory, and record one item in stock if no positive physical count was already saved. Nothing on eBay will change.")) return;
+  const updated = normalizeItem({
+   ...item,
+   status: "Ended",
+   physicalQty: item.physicalQty > 0 ? item.physicalQty : 1,
+   checkedAt: time,
+   statusAt: time,
+   source: "Manual eBay review",
+   notes: appendActivityAt(item.notes,"Listing was absent from the active eBay list. Physical item is here and needs relisting.",time),
+   updatedAt: time
+  });
+  await mergeItems([updated]);
+  notify("Saved as item here — needs relisting. The physical item remains in inventory; eBay was not changed.");
+ } else if (resolution === "archive") {
+  if (!confirm("Archive this record because the physical item is gone? It will be marked Ended with physical quantity zero and hidden from normal tote lists. It will remain searchable in inventory history. Nothing on eBay will change.")) return;
+  const updated = normalizeItem({
+   ...item,
+   status: "Ended",
+   physicalQty: 0,
+   checkedAt: time,
+   statusAt: time,
+   source: "Manual eBay review",
+   notes: appendActivityAt(item.notes,"Listing was absent from the active eBay list. Physical item is gone; record archived with zero stock.",time),
+   updatedAt: time
+  });
+  await mergeItems([updated]);
+  notify("Archived with zero stock. It is hidden from normal tote lists but remains searchable in inventory history. eBay was not changed.");
+ }
+}
+
 function issues(x) {
  const a = [];
 
  if (notFoundInLatestEbay(x)) {
-  a.push("Not found in the latest eBay refresh or import; current status is unknown. Last seen: " + when(x.statusAt));
+  a.push("Not in current active eBay listings — review needed. Last seen: " + when(x.statusAt));
  }
 
  const suggested = suggestedSkuLocation(x.sku);
@@ -3540,7 +3583,8 @@ function card(x, verify = false) {
    '<img class="item-photo" src="' + esc(photo) + '" alt="Photo of ' +
     esc(x.title) + '" loading="lazy">' :
    '<div class="placeholder">📦<small>No saved photo</small></div>') +
-  '<div class="item-body">' + badge +
+ '<div class="item-body">' + badge +
+  (notFoundInLatestEbay(x) ? '<div class="ebay-review-warning">Not in current active eBay listings — review needed.</div>' : '') +
   '<h3>' + esc(x.title) + '</h3>' +
   '<strong>' + money(x.price) + '</strong>' +
   '<p>📍 ' + esc(x.location || (suggestedSkuLocation(x.sku) ? "Suggested from SKU: " + suggestedSkuLocation(x.sku) : "Location missing")) + '</p>' + locationBadge(x) +
@@ -3562,6 +3606,7 @@ function card(x, verify = false) {
   (!verify ? '<button class="secondary" data-card-label="' + esc(x.id) + '">Print Item Label</button>' : '') +
   (!verify && x.checkedAt ? '<button class="secondary" data-unverify="' + esc(x.id) + '">Undo physical check</button>' : '') +
   (!verify && currentView === "totePage" && toteAuditActive && !archivedZeroStock(x) ? '<button class="danger" data-audit-missing="' + esc(x.id) + '">Not Found in This Tote</button>' : '') +
+  (!verify && notFoundInLatestEbay(x) ? '<button class="primary" data-inactive-here="' + esc(x.id) + '">Item Is Here — Needs Relisting</button><button class="danger" data-inactive-archive="' + esc(x.id) + '">Item Is Gone — Archive</button>' : '') +
   (!verify ? '<button class="secondary" data-move="' + esc(x.id) + '">Move to another tote</button>' : '') +
   (!verify && !x.ebayId ? '<button class="secondary" data-combine="' + esc(x.id) + '">Combine with eBay listing</button>' : '') +
   '</div></div></article>';
@@ -3570,6 +3615,8 @@ function card(x, verify = false) {
 function bindCards(el) {
  el.querySelectorAll("[data-move]").forEach(b => { b.onclick = () => openMove(b.dataset.move); });
  el.querySelectorAll("[data-audit-missing]").forEach(b => { b.onclick = work(() => markMissingFromTote(b.dataset.auditMissing)); });
+ el.querySelectorAll("[data-inactive-here]").forEach(b => { b.onclick = work(() => resolveInactiveListing(b.dataset.inactiveHere,"here")); });
+ el.querySelectorAll("[data-inactive-archive]").forEach(b => { b.onclick = work(() => resolveInactiveListing(b.dataset.inactiveArchive,"archive")); });
  el.querySelectorAll("[data-card-label]").forEach(b => {
   b.onclick = work(() => {
    const item = state.items.find(x => x.id === b.dataset.cardLabel);
@@ -3814,7 +3861,7 @@ function renderProblems() {
  $("notFoundList").innerHTML = notFoundRows.map(x =>
   '<article class="problem"><h3>' + esc(x.title) + '</h3><p>eBay # ' + esc(x.ebayId || "Not linked") +
   ' · Last seen: ' + esc(when(x.statusAt)) + ' · Saved status: ' + esc(x.status) +
-  '</p><button class="primary" data-edit="' + esc(x.id) + '">Review record</button></article>'
+  '</p><div class="ebay-review-warning">Not in current active eBay listings — review needed.</div><div class="actions"><button class="primary" data-inactive-here="' + esc(x.id) + '">Item Is Here — Needs Relisting</button><button class="danger" data-inactive-archive="' + esc(x.id) + '">Item Is Gone — Archive</button><button class="secondary" data-edit="' + esc(x.id) + '">View / Edit</button></div></article>'
  ).join("") || '<p class="empty">' + (query ? "No preserved missing records match this search." : "Nothing is waiting here.") + '</p>';
  bindCards($("notFoundList"));
  renderDuplicatePhotoCleanup();
@@ -4176,7 +4223,7 @@ function csvImportReview(prepared) {
   else added++;
  }
  const missing = prepared.status === "Active" ?
-  state.items.filter(x => x.ebayId && !incomingIds.has(x.ebayId)) : [];
+  state.items.filter(x => needsInactiveReview(x) && !incomingIds.has(x.ebayId)) : [];
  return {added, updated, missing};
 }
 
@@ -4506,8 +4553,9 @@ $("confirmImport").onclick = work(async () => {
 
  if (pendingImport.status === "Active") {
   const importedIds = new Set(pendingImport.items.map(x => x.ebayId).filter(Boolean));
+  const missingIds = new Set(review.missing.map(x => x.id));
   const missingTime = stamp();
-  next.items = next.items.map(item => item.ebayId && !importedIds.has(item.ebayId) ?
+  next.items = next.items.map(item => missingIds.has(item.id) && !importedIds.has(item.ebayId) ?
    normalizeItem({...item, source:"Not Found in Latest eBay Import", updatedAt:missingTime}) : item);
  }
 
@@ -4682,10 +4730,11 @@ function makeLabel(item, tote, mode = "inventory") {
  if (destination) { qr.addData(destination); qr.make(); }
  const canvas = document.createElement("canvas"); canvas.width = 800; canvas.height = 600;
  const ctx = canvas.getContext("2d"); ctx.fillStyle="white";ctx.fillRect(0,0,800,600);ctx.fillStyle="black";
- // Keep the QR large enough to scan while giving the printed words more room.
- const count = destination ? qr.getModuleCount() : 0, cell = Math.floor(320/(count+8));
- const originX=468+Math.floor((304-(count+8)*cell)/2)+4*cell;
- const originY=230+Math.floor((320-(count+8)*cell)/2)+4*cell;
+ // A 40 x 30 mm label is small. Reserve the upper third for a large title,
+ // then make the tote and SKU the largest text while keeping a 14–15 mm QR.
+ const count = destination ? qr.getModuleCount() : 0, cell = Math.floor(292/(count+8));
+ const originX=480+Math.floor((292-(count+8)*cell)/2)+4*cell;
+ const originY=270+Math.floor((292-(count+8)*cell)/2)+4*cell;
  for(let y=0;y<count;y++) for(let x=0;x<count;x++) if(qr.isDark(y,x)) ctx.fillRect(originX+x*cell,originY+y*cell,cell,cell);
  function fit(text,x,y,width,size,bold=false,minSize=28) {
   text=String(text);ctx.font=(bold?"bold ":"")+size+"px Arial";
@@ -4695,8 +4744,8 @@ function makeLabel(item, tote, mode = "inventory") {
  }
  const title = item ? item.title : "Tote " + value;
  // Use up to three large, full-width title lines instead of shrinking the whole title.
- let titleSize=item?56:76, lines=[];
- while(titleSize>=40) {
+ let titleSize=item?64:96, lines=[];
+ while(titleSize>=44) {
   ctx.font="bold "+titleSize+"px Arial";
   lines=[""];
   for(const word of title.split(/\s+/)) {
@@ -4707,15 +4756,15 @@ function makeLabel(item, tote, mode = "inventory") {
   titleSize--;
  }
  if(lines.length>3) lines=[lines[0],lines[1],lines.slice(2).join(" ")];
- lines.slice(0,3).forEach((line,index)=>fit(line,28,62+(index*58),744,titleSize,true,38));
+ lines.slice(0,3).forEach((line,index)=>fit(line,28,70+(index*68),744,titleSize,true,42));
  const labelLocation = item ? (item.location || suggestedSkuLocation(item.sku) || "Unassigned") : "";
  const locationPrefix = item && !item.location && suggestedSkuLocation(item.sku) ? "SUGGESTED " : "TOTE ";
- fit(item ? (mode === "inventory" ? locationPrefix + labelLocation : "ITEM LABEL") : "STORAGE LOCATION",28,250,410,item?74:54,true,38);
- fit(item ? (item.sku||"NO SKU") : value,28,338,410,item?58:112,true,40);
- fit(item ? "EBAY " + (item.ebayId||"NOT LINKED") : "SCAN FOR TOTE CONTENTS",28,414,410,item?42:40,true,30);
- fit("OLD CARPENTER",28,558,410,40,true,30);
- if(destination) fit(mode === "public" ? "EBAY LISTING" : "INVENTORY",500,570,260,30,true,26);
- else fit("TEXT ONLY",500,570,260,30,true,26);
+ fit(item ? (mode === "inventory" ? locationPrefix + labelLocation : "ITEM LABEL") : "STORAGE LOCATION",28,286,424,item?96:62,true,50);
+ fit(item ? (item.sku||"NO SKU") : value,28,394,424,item?76:126,true,46);
+ fit(item ? "EBAY " + (item.ebayId||"NOT LINKED") : "SCAN FOR TOTE CONTENTS",28,478,424,item?48:42,true,34);
+ fit("OLD CARPENTER",28,566,424,38,true,32);
+ if(destination) fit(mode === "public" ? "EBAY LISTING" : "INVENTORY",500,584,260,32,true,28);
+ else fit("TEXT ONLY",500,584,260,32,true,28);
  labelCanvas=canvas;labelFilename="Ebay_"+(item?"Item_":"Tote_")+value.replace(/[^a-z0-9_-]/gi,"_");
  $("labelPreview").src=canvas.toDataURL("image/png");$("labelDialog").showModal();
 }
@@ -5010,7 +5059,7 @@ function makeLiveReview(listings, fetchedAt) {
   if (!saved) added.push(live);
   else { matched.push({saved,live}); if (liveDifference(saved,live)) changed.push({saved,live}); }
  }
- const missing = state.items.filter(x => x.ebayId && !liveIds.has(x.ebayId));
+ const missing = state.items.filter(x => needsInactiveReview(x) && !liveIds.has(x.ebayId));
  return {listings, matched, changed, added, missing, fetchedAt};
 }
 function liveReviewText(review) {
@@ -5102,7 +5151,8 @@ $("applyEbayLive").onclick = work(async () => {
   }
  }
  const liveIds = new Set(review.listings.map(x => x.item_id));
- next.items = next.items.map(item => item.ebayId && !liveIds.has(item.ebayId) ?
+ const missingIds = new Set(review.missing.map(x => x.id));
+ next.items = next.items.map(item => missingIds.has(item.id) && !liveIds.has(item.ebayId) ?
   normalizeItem({...item, source:"Not Found in Latest eBay Refresh", updatedAt:time}) : item);
  next.importedAt = time;
  const imageRows = review.listings.filter(x => x.gallery_url).map(x => ({user_id:accountId,ebay_id:x.item_id,image_url:x.gallery_url,updated_at:time}));
@@ -5240,4 +5290,3 @@ start().catch(e => {
  <!-- Restart GitHub Pages deployment -->
 </body>
 </html>
-
