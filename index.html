@@ -516,7 +516,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <button id="floatingHome" type="button" class="primary" data-view="home" aria-label="Return to home screen" hidden>🏠 Home</button>
  </nav>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.08.21 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.09.22 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -5086,7 +5086,7 @@ function liveReviewText(review) {
   review.missing.length + " saved linked records absent from the active list (they will remain saved and move to Not Found)",
   "",
   "Examples of changes:",
-  ...review.changed.slice(0,8).map(x => x.live.item_id + " · " + x.live.title),
+  ...review.changed.slice(0,20).map(x => x.live.item_id + " · " + x.live.title + "\n    Saved quantity: " + (x.saved.listingQty ?? "Unknown") + " → eBay quantity: " + (x.live.quantity_available ?? "Unknown") + (x.saved.listingQty === x.live.quantity_available ? " (quantity unchanged; other listing detail changed)" : " (QUANTITY CHANGE)")),
   "",
   "Examples of new listings:",
   ...review.added.slice(0,8).map(x => x.item_id + " · " + x.title),
@@ -5174,6 +5174,16 @@ $("applyEbayLive").onclick = work(async () => {
  }
  for (const x of imageRows) savedEbayImageById.set(x.ebay_id,x.image_url);
  await commit(next);
+ // Read the saved cloud data back before reporting that a refresh was applied.
+ // This compares only eBay quantities; physical counts and audit dates stay untouched.
+ const confirmed = await cloudState();
+ const confirmedByEbay = new Map(confirmed.items.filter(x => x.ebayId).map(x => [x.ebayId,x]));
+ const quantityFailures = review.changed.filter(({live}) =>
+  confirmedByEbay.get(live.item_id)?.listingQty !== live.quantity_available);
+ if (quantityFailures.length) {
+  setCloudInventoryReady(false,"eBay quantity verification did not match the saved cloud records. Tap Refresh and review before editing.");
+  throw Error("Refresh saved, but quantity verification failed for eBay item numbers: " + quantityFailures.slice(0,8).map(x => x.live.item_id).join(", ") + ". No physical counts were changed.");
+ }
  $("applyEbayLive").disabled = true;
  $("liveProgress").textContent = "Refresh applied at " + when(time) + ": " + review.added.length + " added, " + review.changed.length + " updated, " + review.missing.length + " not found and preserved for review.";
  notify("eBay refresh applied: " + review.added.length + " added, " + review.changed.length + " updated, " + review.missing.length + " preserved in Not Found. No eBay listing was changed.");
