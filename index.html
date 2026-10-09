@@ -123,6 +123,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
 .location-confirmed{display:inline-block;background:#dff3e4;color:#15562a;padding:5px 9px;border-radius:8px;font-size:14px;font-weight:bold}.location-unverified{display:inline-block;background:#fff0d2;color:#744800;padding:5px 9px;border-radius:8px;font-size:14px;font-weight:bold}
 .audit-panel{border:3px solid #2463bd;background:#eef6ff}.audit-good{background:#dff3e4;color:#15562a;border-radius:10px;padding:12px;font-weight:bold}.audit-warning{background:#fff0d2;color:#744800;border-radius:10px;padding:12px}.stock-warning{display:inline-block;background:#fde1df;color:#8a1f17;padding:5px 9px;border-radius:8px;font-size:14px;font-weight:bold;margin-left:6px}
 .inventory-filters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:18px 0}.inventory-filters input,.inventory-filters select{width:100%;min-width:0}.inventory-filters label{font-size:16px;margin-top:0}.inventory-filters .filter-search{grid-column:1/-1}@media(max-width:600px){.inventory-filters{grid-template-columns:1fr}}
+.quick-tools{display:flex;flex-wrap:wrap;gap:9px;margin:12px 0}.quick-tools button{min-height:40px}.pull-result{border:2px solid #b8cee9;border-radius:12px;padding:14px;margin:14px 0;background:#f8fbff}.pull-result strong{font-size:18px}.pull-details{background:#e4f5f2;padding:10px;border-radius:8px;margin:8px 0}.quick-sort{max-width:300px}.exception-action{margin-top:8px}.pack-search-help{background:#f4f8ff;padding:10px;border-radius:8px}
 /* Keep navigation within reach on long inventory and tote pages. */
 .floating-navigation{position:fixed;right:14px;bottom:calc(14px + env(safe-area-inset-bottom,0px));z-index:50;display:flex;gap:8px}
 .floating-navigation button{min-height:48px;padding:10px 15px;font-weight:bold;box-shadow:0 3px 12px #10223d40;border:1px solid #fff}
@@ -279,7 +280,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
      <div><label for="toteFilter">Filter by tote / location</label>
       <input id="toteFilter" list="toteOptions" placeholder="Leave blank to search every location"></div>
     </div>
-    <button id="clearFilters" type="button" class="secondary">Clear Filters / Show All Items</button>
+    <div class="quick-tools"><button id="clearFilters" type="button" class="secondary">Clear Filters / Show All Items</button><button id="inventoryToPacking" type="button" class="secondary">Find Sold Item / Packing</button><button id="inventoryToProblems" type="button" class="secondary">Inventory Problems</button></div><label for="inventorySort">Sort inventory results</label><select id="inventorySort" class="quick-sort"><option value="title">Item title</option><option value="sku">SKU / item number</option><option value="location">Tote / location</option><option value="recent">Most recently changed</option></select>
 
     <p id="inventoryCount" class="small"></p>
     <p class="small">
@@ -314,7 +315,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
     <div class="searchbar"><input id="toteSearch" type="search" placeholder="Search within this tote"><select id="toteVerification" aria-label="Filter tote verification"><option value="">Current tote records</option><option value="confirmed">Confirmed physical stock</option><option value="unverified">Needs physical checking</option><option value="archived">Ended/sold with zero stock</option></select></div>
     <button id="pageToteLabel" class="secondary">Make This Tote’s QR Label</button>
     <button id="printToteManifest" class="secondary">Print Tote Inventory Sheet</button>
-    <button id="startToteAudit" class="primary">Start Physical Tote Audit</button>
+    <button id="startToteAudit" class="primary">Start Physical Tote Audit</button><div class="quick-tools"><button id="toteToPacking" class="secondary" type="button">Find / Pull an Item</button><button id="toteToProblems" class="secondary" type="button">Review Inventory Problems</button></div><label for="toteSort">Sort this tote</label><select id="toteSort" class="quick-sort"><option value="title">Item title</option><option value="sku">SKU / item number</option><option value="status">Needs checking first</option></select>
    </div>
    <div id="toteExceptionsPanel" class="panel" hidden>
     <h3>eBay / Stock Exceptions in This Tote</h3>
@@ -452,7 +453,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
    <h2>Find Sold Item / Packing Check</h2>
    <p>Copy the eBay item number from your order, or search by title or SKU. All saved statuses are searched. This app has no live order feed.</p>
    <label for="packSearch">Item number, title or SKU</label><input id="packSearch" type="search" placeholder="Paste the eBay item number">
-   <p id="packSummary" class="small"></p><div id="packResults" class="cards"></div>
+   <p class="pack-search-help">Enter an eBay item number from the order, SKU, or part of the title. Check Seller Hub for actual order quantity. This is not a live order feed.</p><div class="quick-tools"><button id="packClear" class="secondary" type="button">Clear Search</button><button id="packToTotes" class="secondary" type="button">Browse Totes</button></div><p id="packSummary" class="small"></p><div id="packResults" class="grid"></div>
   </section>
   <section id="privacyCheck" hidden>
    <h2>QR Label Privacy Check</h2>
@@ -516,7 +517,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <button id="floatingHome" type="button" class="primary" data-view="home" aria-label="Return to home screen" hidden>🏠 Home</button>
  </nav>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.09.22 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.09.23 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -3394,6 +3395,20 @@ function normalizedSearchText(value) {
 function compactSearchText(value) {
  return normalizedSearchText(value).replace(/[^a-z0-9]/g,"");
 }
+function fuzzyItemSearch(query, items = state.items) {
+ const value=String(query||'').trim();
+ if (!value) return items;
+ const direct=searchItems(value,items);
+ if (direct.length) return direct;
+ // Only fall back to partial SKU searching for 2+ characters; never guess an eBay number.
+ if (/^\d{8,}$/.test(value) || compactSearchText(value).length<2) return [];
+ const q=compactSearchText(value);
+ return items.filter(x=>[x.sku,x.title].some(v=>compactSearchText(v).includes(q)));
+}
+function sortSavedItems(rows, mode='title') {
+ const alpha=(a,b)=>String(a||'').localeCompare(String(b||''),undefined,{numeric:true,sensitivity:'base'});
+ return rows.sort((a,b)=> mode==='recent' ? alpha(b.updatedAt,a.updatedAt) : mode==='location' ? alpha(a.location,b.location)||alpha(a.sku,b.sku) : mode==='sku' ? alpha(a.sku,b.sku)||alpha(a.title,b.title) : mode==='status' ? Number(locationConfirmed(a))-Number(locationConfirmed(b))||alpha(a.sku,b.sku) : alpha(a.title,b.title));
+}
 function searchItems(query, items = state.items) {
  const normalizedQuery = normalizedSearchText(query).trim();
  const terms = normalizedQuery.split(/\s+/).filter(Boolean);
@@ -3604,9 +3619,9 @@ function renderInventoryReport() {
 $('summaryCsv').onclick = () => $('csvExport').click();
 function renderPacking() {
  const query = $("packSearch").value.trim();
- const rows = query ? searchItems(query) : state.items.filter(x => x.status === "Sold");
+ const rows = query ? fuzzyItemSearch(query) : state.items.filter(x => x.status === "Sold");
  $("packSummary").textContent = rows.length + " matches in saved records. Showing up to 40. Check the current order in Seller Hub.";
- $("packResults").innerHTML = rows.slice(0,40).map(x => card(x) + '<button class="primary" data-pack="' + esc(x.id) + '">Packing check: ' + esc(x.title) + '</button>').join("") || '<p>No saved match. Try the item number, SKU or fewer words. This does not prove an item is unlisted.</p>';
+ $("packResults").innerHTML = rows.slice(0,40).map(x => '<div class="pull-result"><strong>'+esc(x.title)+'</strong><div class="pull-details"><strong>GO TO: '+esc(x.location || 'LOCATION UNKNOWN')+'</strong><br>SKU: '+esc(x.sku || 'None')+' · Physical stock: '+esc(x.physicalQty ?? 'Not counted')+'<br>eBay #: '+esc(x.ebayId || 'Not linked')+' · Saved listing quantity: '+esc(x.listingQty ?? 'Unknown')+'</div>'+card(x)+'<button class="primary" data-pack="' + esc(x.id) + '">Open Packing Checklist</button></div>').join("") || '<p>No saved match. Try the item number, SKU or fewer words. This does not prove an item is unlisted.</p>';
  bindCards($("packResults"));
  $("packResults").querySelectorAll("[data-pack]").forEach(b => b.onclick = () => {
   if (locked) return;
@@ -3622,6 +3637,11 @@ function renderPacking() {
 }
 let packingId = null;
 $("packSearch").oninput = renderPacking;
+$("packClear").onclick=()=>{$("packSearch").value='';renderPacking();$("packSearch").focus();};
+$("packToTotes").onclick=()=>show('locations');
+$("inventoryToPacking").onclick=()=>show('packing');
+$("inventoryToProblems").onclick=()=>show('problems');
+$("inventorySort").onchange=renderInventory;
 $("packForm").onsubmit = work(async e => {
  e.preventDefault();
  const x = state.items.find(x => x.id === packingId);
@@ -3655,7 +3675,7 @@ function renderAll() {
 }
 
 function renderInventory() {
- let rows = searchItems($("search").value);
+ let rows = fuzzyItemSearch($("search").value);
  if ($("locationFilter").value) rows = rows.filter(x => locationConfirmed(x) === ($("locationFilter").value === "confirmed"));
 
  if ($("statusFilter").value) {
@@ -3668,7 +3688,7 @@ function renderInventory() {
   );
  }
 
- rows.sort((a, b) => a.title.localeCompare(b.title, undefined, {numeric: true}));
+ sortSavedItems(rows,$("inventorySort").value);
 
  $("inventoryCount").textContent = rows.length + " records";
 
@@ -3796,9 +3816,9 @@ $("removeSelectedDuplicatePhotos").onclick = work(async () => {
 function renderProblems() {
  const problemRows = state.items.filter(x => issues(x).length);
  const query = $("problemSearch").value.trim();
- const rows = query ? searchItems(query, problemRows) : problemRows;
+ const rows = query ? fuzzyItemSearch(query, problemRows) : problemRows;
  const allNotFound = state.items.filter(notFoundInLatestEbay);
- const notFoundRows = query ? searchItems(query, allNotFound) : allNotFound;
+ const notFoundRows = query ? fuzzyItemSearch(query, allNotFound) : allNotFound;
 
  $("problemSearchCount").textContent = query ?
   rows.length + " matching problem records out of " + problemRows.length + "." :
@@ -4850,7 +4870,8 @@ function renderToteExceptions(items) {
  const flagged=items.map(item=>({item,warnings:toteStockExceptions(item)})).filter(x=>x.warnings.length);
  $("toteExceptionsPanel").hidden = !selectedTote || !flagged.length;
  $("toteExceptionsSummary").textContent = flagged.length + " current tote record" + (flagged.length===1?"":"s") + " need eBay / stock review. No records are changed here.";
- $("toteExceptionsList").innerHTML = flagged.map(({item,warnings}) => '<div class="panel"><strong>'+esc(item.sku || item.ebayId || "No SKU")+'</strong> · '+esc(item.title)+'<ul>'+warnings.map(w=>'<li>'+esc(w)+'</li>').join("")+'</ul></div>').join("");
+ $("toteExceptionsList").innerHTML = flagged.map(({item,warnings}) => '<div class="panel"><strong>'+esc(item.sku || item.ebayId || "No SKU")+'</strong> · '+esc(item.title)+'<ul>'+warnings.map(w=>'<li>'+esc(w)+'</li>').join("")+'</ul><button type="button" class="primary exception-action" data-exception-edit="'+esc(item.id)+'">Review This Item</button></div>').join("");
+ $("toteExceptionsList").querySelectorAll('[data-exception-edit]').forEach(b=>b.onclick=()=>openEditor(b.dataset.exceptionEdit));
 }
 function renderTotePage() {
  const assigned = assignedToteItems(selectedTote);
@@ -4863,10 +4884,10 @@ function renderTotePage() {
  $("toteTitle").textContent = selectedTote ? "Tote / location: " + selectedTote : "Location missing";
  $("toteAuditStatus").hidden = !selectedTote;
  let rows = $("toteVerification").value === "archived" ? archived : items;
- rows = searchItems($("toteSearch").value, rows);
+ rows = fuzzyItemSearch($("toteSearch").value, rows);
  if ($("toteVerification").value === "confirmed") rows = rows.filter(locationConfirmed);
  if ($("toteVerification").value === "unverified") rows = rows.filter(x => !locationConfirmed(x));
- rows.sort((a,b)=>a.title.localeCompare(b.title,undefined,{numeric:true}));
+ sortSavedItems(rows,$("toteSort").value);
  $("toteSummary").textContent = items.length + " current saved-location records · " + confirmed + " confirmed in stock · " + unresolved.length + " need checking · " + archived.length + " ended/sold zero-stock records hidden" + (suggestions.length ? " · " + suggestions.length + " separate SKU suggestion" + (suggestions.length === 1 ? "" : "s") : "") + ". Showing " + Math.min(toteLimit,rows.length) + " of " + rows.length + " matching records.";
  $("pageToteLabel").hidden = !selectedTote;
  $("printToteManifest").hidden = !selectedTote;
@@ -4933,6 +4954,9 @@ $("moveForm").onsubmit=work(async e=>{
 });
 $("allTotes").onclick=()=>{if(!locked)show("locations");};
 $("toteSearch").oninput=()=>{toteLimit=40;renderTotePage();};
+$("toteSort").onchange=()=>{toteLimit=40;renderTotePage();};
+$("toteToPacking").onclick=()=>show('packing');
+$("toteToProblems").onclick=()=>show('problems');
 $("toteVerification").onchange=()=>{toteLimit=40;renderTotePage();};
 $("toteMore").onclick=()=>{toteLimit+=40;renderTotePage();};
 $("pageToteLabel").onclick=work(()=>makeLabel(null,selectedTote));
