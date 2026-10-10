@@ -172,7 +172,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
  <main class="container">
 
   <section id="home">
-   <div class="panel"><strong>Find and pack an item</strong><p>Search all saved records using the item number from your eBay order. Saved status is a snapshot; confirm the sale in Seller Hub.</p><button class="primary" data-view="packing">Find Sold Item / Packing Check</button><button class="secondary" data-view="privacyCheck">QR Label Privacy Check</button><button class="secondary" data-view="inventoryReport">Inventory Summary</button><p id="snapshotSummary" class="small"></p></div>
+   <div class="panel"><strong>Find and pack an item</strong><p>Search all saved records using the item number from your eBay order. Saved status is a snapshot; confirm the sale in Seller Hub.</p><button class="primary" data-view="packing">Find Sold Item / Packing Check</button><button class="secondary" data-view="privacyCheck">QR Label Privacy Check</button><button class="secondary" data-view="inventoryReport">Inventory Summary</button><button class="secondary" data-view="inventoryProgress">Inventory Progress</button><p id="snapshotSummary" class="small"></p></div>
    <div class="stats">
     <div class="stat"><strong id="recordCount">0</strong>Inventory records</div>
     <div class="stat"><strong id="checkedCount">0</strong>Physically checked</div>
@@ -217,6 +217,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
      <strong>Backup &amp; Export</strong>
      <small>Save a full copy with all uploaded photos, or export a spreadsheet.</small>
     </button>
+    <button class="home-card blue" data-view="helpGuide"><span class="icon">📖</span><strong>Help &amp; Instructions</strong><small>Search the owner’s guide and learn what every button does.</small></button>
    </div>
 
    <p class="small">
@@ -225,6 +226,13 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
    </p>
   </section>
 
+   <section id="helpGuide" hidden>
+    <div class="panel"><h2>Help &amp; Instructions</h2><p>Search for a button, task, warning, or storage location. Open a topic to read its instructions.</p>
+    <label for="guideSearch">Search the user guide</label><input id="guideSearch" type="search" placeholder="Example: print sheet, backup, quantity, cabinet">
+    <p id="guideCount" class="small"></p><div id="guideTopics"></div>
+    <button class="secondary" data-view="home">← Home</button></div>
+   </section>
+   <section id="inventoryProgress" hidden><div class="panel"><h2>Inventory Progress</h2><p>Progress reflects saved physical checks, not live eBay availability. An item can be checked without its entire location having a completed audit.</p><div id="progressSummary"></div><div id="progressLocations"></div><button class="secondary" data-view="locations">Storage Locations</button></div></section>
   <section id="verify" hidden>
    <div class="panel">
     <h2>Photograph &amp; Inventory an Item</h2>
@@ -294,9 +302,9 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
 
   <section id="locations" hidden>
    <div class="panel">
-    <h2>Storage Locations</h2>
+    <h2>Storage Locations: Totes, Shelves &amp; Cabinets</h2>
     <p>
-     Tap a tote to see its recorded contents. Green means a physical check found stock there; amber means the location still needs checking.
+     Tap a location to see its recorded contents. Use A1 for totes, P1 for puzzle shelves, M1 for model shelves, and C1 / C2 for cabinets. Green means a physical check found stock there; amber means the location still needs checking.
      The count is inventory records, not total pieces.
     </p>
     <label for="labelTote">Tote to label</label><input id="labelTote" list="toteOptions" maxlength="160" placeholder="A1"><button id="toteLabel" class="secondary">Make Tote QR Label</button>
@@ -310,11 +318,11 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
     <button id="allTotes" class="secondary">← All Totes</button>
     <h2 id="toteTitle"></h2>
     <p id="toteSummary"></p>
-    <p id="toteAuditStatus" class="audit-warning"></p>
+    <p id="toteAuditStatus" class="audit-warning"></p><p id="sheetFreshness" class="audit-warning" hidden></p>
     <p class="small">The normal list contains records with this exact saved location. An SKU suggestion is shown separately and is not treated as proof that an item is physically in the tote. Ended or sold records with a confirmed quantity of zero are kept in history but hidden from the normal list.</p>
     <div class="searchbar"><input id="toteSearch" type="search" placeholder="Search within this tote"><select id="toteVerification" aria-label="Filter tote verification"><option value="">Current tote records</option><option value="confirmed">Confirmed physical stock</option><option value="unverified">Needs physical checking</option><option value="archived">Ended/sold with zero stock</option></select></div>
     <button id="pageToteLabel" class="secondary">Make This Tote’s QR Label</button>
-    <button id="printToteManifest" class="secondary">Print Tote Inventory Sheet</button>
+    <button id="printToteManifest" class="secondary">Print Location Inventory Sheet</button>
     <button id="startToteAudit" class="primary">Start Physical Tote Audit</button><div class="quick-tools"><button id="toteToPacking" class="secondary" type="button">Find / Pull an Item</button><button id="toteToProblems" class="secondary" type="button">Review Inventory Problems</button></div><label for="toteSort">Sort this tote</label><select id="toteSort" class="quick-sort"><option value="title">Item title</option><option value="sku">SKU / item number</option><option value="status">Needs checking first</option></select>
    </div>
    <div id="toteExceptionsPanel" class="panel" hidden>
@@ -517,7 +525,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <button id="floatingHome" type="button" class="primary" data-view="home" aria-label="Return to home screen" hidden>🏠 Home</button>
  </nav>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.09.23 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.09.24 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -3651,9 +3659,42 @@ $("packForm").onsubmit = work(async e => {
  await mergeItems([normalizeItem({...x,notes:appendActivity(x.notes,"Packing check completed for eBay # " + x.ebayId + ". Physical identity, order quantity and label checked; shipment and inventory counts unchanged."),updatedAt:stamp()})]);
  $("packDialog").close(); notify("Packing check saved in item notes. Complete shipping in Seller Hub.");
 });
+const GUIDE_TOPICS = [
+ ["Getting started / Home", "Home takes you to the main menu. The top Refresh button reloads saved cloud records; it does not fetch current eBay listings. Sign out ends your login. Floating Home and Top buttons help navigate long screens."],
+ ["Verify an Item", "Choose a storage location, take or choose a photograph, search or identify the item, compare it to the saved listing, then select the correct match. Confirm the physical count and location. Never approve an uncertain photo match."],
+ ["My Inventory", "Search by item number, SKU, title or location. View / Edit changes this app only. Print Item Label makes a QR label; choose a public link or text-only label for anything shipping to a buyer. Undo physical check removes verification, not the item."],
+ ["Storage Locations: totes, shelves, cabinets", "The location code can be A1 (tote), P1 (puzzle shelf), M1 (model shelf), C1 or C2 (cabinet). Use C1-S1 for cabinet shelf 1 if useful. Assign an item under View / Edit, then Confirm location / stock. The same audit, labels and printable sheets work for all codes."],
+ ["Audit a location", "Open Storage Locations, choose A1, P1, M1 or a cabinet location, then Start Physical Tote Audit (the existing button name). Inspect every item and confirm its saved location and count. Mark expected items missing only after checking carefully; put unmatched finds in REVIEW. Finish the audit when all records and physical items are reconciled."],
+ ["Print a storage inventory sheet", "Open a location, choose Print Location Inventory Sheet, and print the half-sheet checklist with QR code. Only confirmed stock appears. The out-of-date notice compares against the sheet last prepared in this browser, not across devices. Paper printed before this version is not registered automatically."],
+ ["eBay Connection: Refresh / Review / Apply", "Refresh Active Listings from eBay downloads a read-only snapshot; it does not save updates. Inspect the Review showing changed quantities. Apply Reviewed Active Listings to App saves the reviewed data to your inventory database without editing eBay. A normal browser Refresh is different. Missing listings are retained for review, not automatically deleted."],
+ ["Inventory Problems and warnings", "Warnings flag quantity differences, duplicates, missing locations and unverified stock. Physical count can differ legitimately from eBay selling units when a listing is for a lot. Check the eBay listing before changing anything. Not Found in Latest eBay Refresh does not prove the item sold."],
+ ["Find Sold Item / Packing Check", "Enter the eBay item number from Seller Hub or search by title or SKU. Confirm the photograph, location and ordered quantity. The packing checklist records a note only: it does not deduct stock, buy postage, mark shipped or modify eBay."],
+ ["Backup & Export", "Download Full Backup saves app records and photos as JSON. CSV exports data without photos. Download a full backup before a major import or new index-file update. Restore merges records; the erase/start-over option is destructive and should not be used for routine work."],
+ ["Moving items and sheet warnings", "Move an item to a different location through its record. Confirm its new physical position afterward. If you printed the old location's sheet in this browser, moving confirmed stock should mark that sheet as potentially outdated. Prepare a fresh sheet after reviewing changes."],
+ ["Inventory Progress", "The progress screen counts records with a saved physical check, confirmed in-stock records, records needing checking, and fully audited storage locations. Counts are based on app data rather than live eBay orders. An empty pre-created location is not a completed audit."],
+ ["QR privacy", "Private QR inventory links require your account login; they are not buyer-facing item details. For labels that could leave your workshop, use Public eBay listing or Text only. Test with a signed-out phone if concerned."],
+];
+function renderHelpGuide() {
+ const q=normalizedSearchText($("guideSearch").value).trim();
+ const topics=GUIDE_TOPICS.filter(([title,body])=>normalizedSearchText(title+" "+body).includes(q));
+ $("guideCount").textContent=topics.length+" of "+GUIDE_TOPICS.length+" guide topics";
+ $("guideTopics").innerHTML=topics.map(([title,body],i)=>'<details class="panel"'+(q?' open':'')+'><summary style="cursor:pointer;font-weight:bold">'+esc(title)+'</summary><p>'+esc(body)+'</p></details>').join("") || '<p class="empty">No topic matched. Try a shorter word such as QR, tote, quantity or print.</p>';
+}
+$("guideSearch").oninput=renderHelpGuide;
+function renderInventoryProgress() {
+ const total=state.items.length, checked=state.items.filter(x=>Boolean(x.checkedAt)).length;
+ const inStock=state.items.filter(locationConfirmed).length;
+ const names=[...new Set(state.items.map(x=>canonicalLocation(x.location)).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+ const audited=names.filter(n=>Boolean(completedToteAuditDate(n,toteItems(n))));
+ $("progressSummary").innerHTML='<div class="stats"><div class="stat"><strong>'+checked+' / '+total+'</strong>Physically checked</div><div class="stat"><strong>'+inStock+'</strong>Confirmed in stock</div><div class="stat"><strong>'+audited.length+' / '+names.length+'</strong>Locations fully audited</div></div><p><strong>'+Math.max(0,total-checked)+'</strong> records have not had a physical count saved. '+(total?Math.round(checked/total*100):0)+'% physically checked.</p>';
+ $("progressLocations").innerHTML=names.map(n=>{const items=toteItems(n).filter(x=>!archivedZeroStock(x));const count=items.filter(locationConfirmed).length;const date=completedToteAuditDate(n,items);return '<p><button class="secondary" data-progress-location="'+esc(n)+'">'+esc(n)+'</button> '+count+' / '+items.length+' currently confirmed'+(date?' · fully audited '+esc(when(date)):' · audit not complete')+'</p>';}).join('')||'<p>No assigned locations yet.</p>';
+ $("progressLocations").querySelectorAll('[data-progress-location]').forEach(b=>b.onclick=()=>openTote(b.dataset.progressLocation));
+}
 function renderAll() {
  $("snapshotSummary").textContent = liveListingById.size ? "Live eBay review loaded: " + liveListingById.size + " active listings. Last saved listing update: " + (state.importedAt ? when(state.importedAt) : "None") + "." : "Last listing update: " + (state.importedAt ? when(state.importedAt) : "None imported") + ". Use eBay Connection to run a read-only live refresh.";
  if (currentView === "packing") renderPacking();
+ if (currentView === "helpGuide") renderHelpGuide();
+ if (currentView === "inventoryProgress") renderInventoryProgress();
  if (currentView === "inventoryReport") renderInventoryReport();
  $("recordCount").textContent = state.items.length;
  $("backupSummary").textContent = state.items.length + " records · " + state.items.reduce((n,x)=>n+x.photos.length,0) + " saved photos. Full backup also includes locations, notes, prices, eBay numbers and physical checks.";
@@ -4827,6 +4868,25 @@ function printToteInventorySheet() {
  popup.document.open();
  popup.document.write('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tote '+esc(tote)+' Inventory Sheet</title><style>*{box-sizing:border-box}html,body{margin:0;background:#ddd;color:#000;font-family:Arial,Helvetica,sans-serif}.print-button{position:fixed;right:14px;top:14px;z-index:5;padding:12px 18px;border:0;border-radius:8px;background:#1759ba;color:#fff;font:bold 17px Arial}.letter{width:8.5in;height:11in;margin:12px auto;background:#fff;overflow:hidden}.half{height:5.5in;padding:.22in .28in .18in;border-bottom:2px dashed #777;overflow:hidden}.half:last-child{border-bottom:0}.half header{height:.92in;display:flex;justify-content:space-between;gap:.15in;border-bottom:2px solid #000;padding-bottom:.08in;margin-bottom:.07in}.half h1{font-size:28pt;line-height:1;margin:0 0 .05in}.half p{font-size:9.5pt;line-height:1.2;margin:.025in 0}.half header img{width:.85in;height:.85in;image-rendering:pixelated}.half table{width:100%;border-collapse:collapse;table-layout:fixed}.half th,.half td{border:1px solid #000;padding:.035in .055in;height:.285in;font-size:10.5pt;line-height:1.05;vertical-align:middle;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.half th{height:.28in;background:#eee;font-size:8.5pt;text-align:left}.half .pulled{width:.63in;text-align:center}.half .sku{width:1.25in}.half .qty{width:.42in;text-align:center}.half td:first-child{text-align:center}.pull-box{display:inline-block;width:.18in;height:.18in;border:2px solid #000;vertical-align:middle}.half footer{font-size:8pt;text-align:center;margin-top:.055in}.blank{display:flex;align-items:center;justify-content:center;color:#777;font-size:12pt}.blank p{font-size:12pt}@page{size:letter portrait;margin:0}@media print{html,body{background:#fff}.letter{margin:0;page-break-after:always}.letter:last-of-type{page-break-after:auto}.print-button{display:none}}</style></head><body><button class="print-button" onclick="window.print()">Print This Sheet</button>'+pages+'<script>window.addEventListener("load",()=>setTimeout(()=>window.print(),250));<\/script></body></html>');
  popup.document.close();
+ // This is a browser-local print-preparation record, NOT proof the paper printed.
+ try { localStorage.setItem(sheetStorageKey(tote),JSON.stringify({date:stamp(),signature:locationSheetSignature(tote)})); } catch(e) { /* storage may be disabled */ }
+ renderTotePage();
+}
+function sheetStorageKey(name) { return APP+":printed-sheet:"+(accountId||"unknown")+":"+canonicalLocation(name).toUpperCase(); }
+function locationSheetSignature(name) {
+ // Detect relevant stock, identity, and location changes, but not unrelated eBay price edits.
+ return JSON.stringify(toteItems(name).filter(locationConfirmed).map(x=>[x.id,x.ebayId,x.sku,x.title,x.physicalQty,x.checkedAt,x.location]).sort((a,b)=>String(a[0]).localeCompare(String(b[0]))));
+}
+function renderSheetFreshness(name) {
+ const el=$("sheetFreshness"); el.hidden=true;
+ if(!name) return;
+ let record=null;
+ try { record=JSON.parse(localStorage.getItem(sheetStorageKey(name))||"null"); } catch(e) {}
+ if(!record) { el.textContent="No print record in this browser. Your existing printed sheet may still be current; this app cannot check paper printed before this feature or on another device."; el.hidden=false; return; }
+ const changed=record.signature!==locationSheetSignature(name);
+ el.className=changed?"audit-warning":"audit-good";
+ el.textContent=changed ? "Printed inventory sheet may be outdated. Location or verified stock changed since you prepared it on "+when(record.date)+". Review and reprint." : "Sheet matches the current verified inventory in this browser (prepared "+when(record.date)+"). Printing is not independently confirmed.";
+ el.hidden=false;
 }
 function toteSkuSuggestions(name) {
  if (!name) return [];
@@ -4879,9 +4939,10 @@ function renderTotePage() {
  const items = assigned.filter(x => !archivedZeroStock(x));
  const suggestions = toteSkuSuggestions(selectedTote);
  renderToteExceptions(items);
+ renderSheetFreshness(selectedTote);
  const confirmed = items.filter(locationConfirmed).length;
  const unresolved = items.filter(x => !locationConfirmed(x));
- $("toteTitle").textContent = selectedTote ? "Tote / location: " + selectedTote : "Location missing";
+ $("toteTitle").textContent = selectedTote ? "Storage location: " + selectedTote : "Location missing";
  $("toteAuditStatus").hidden = !selectedTote;
  let rows = $("toteVerification").value === "archived" ? archived : items;
  rows = fuzzyItemSearch($("toteSearch").value, rows);
@@ -4895,7 +4956,7 @@ function renderTotePage() {
  $("toteAuditPanel").hidden = !toteAuditActive;
  const auditDate = completedToteAuditDate(selectedTote, items);
  $("toteAuditStatus").className = auditDate ? "audit-good" : "audit-warning";
- $("toteAuditStatus").textContent = auditDate ? "✓ " + selectedTote + " fully audited on " + when(auditDate) + "." : "This tote is not yet fully audited. Its contents should not be treated as guaranteed until every physical item and every saved-location record is reconciled.";
+ $("toteAuditStatus").textContent = auditDate ? "✓ " + selectedTote + " fully audited on " + when(auditDate) + "." : "This location is not yet fully audited. Reconcile every physical item and saved-location record before treating it as complete.";
  if (toteAuditActive) {
   $("toteAuditHeading").textContent = "Physical Tote Audit: " + selectedTote;
   const endedWithStock = items.filter(x => (x.status === "Ended" || x.status === "Sold") && x.physicalQty > 0).length;
