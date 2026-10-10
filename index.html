@@ -525,7 +525,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <button id="floatingHome" type="button" class="primary" data-view="home" aria-label="Return to home screen" hidden>🏠 Home</button>
  </nav>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.09.24 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.10.25 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -603,7 +603,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
 
    <div>
     <label for="f_location">Tote / storage location</label>
-    <input id="f_location" list="toteOptions" maxlength="160" placeholder="A7">
+    <input id="f_location" list="toteOptions" maxlength="160" placeholder="Enter tote or storage location">
    </div>
 
    <div class="wide">
@@ -668,7 +668,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
    step="1" placeholder="Enter the count you just checked">
 
   <label for="checkLocation">Physical location / last known tote</label>
-  <input id="checkLocation" list="toteOptions" maxlength="160" placeholder="A7">
+  <input id="checkLocation" list="toteOptions" maxlength="160" placeholder="Enter tote or storage location">
 
   <div id="attachPhotoOption" hidden>
    <label class="verify-safety">
@@ -4208,7 +4208,7 @@ function prepareCsv(text, status) {
     status,
     price: numberOrNull(get("price")),
     listingQty: numberOrNull(get("listingQty"), true),
-    location: get("location"),
+    location: get("location") || suggestedSkuLocation(get("sku")),
     notes: "",
     photos: [],
     source: "CSV report",
@@ -4566,7 +4566,7 @@ $("confirmImport").onclick = work(async () => {
     next.items[ix].listingQty = x.listingQty;
    }
 
-   if (!old.location && x.location) {
+   if (!old.location && !old.checkedAt && x.location) {
     next.items[ix].location = x.location;
    }
   }
@@ -5070,6 +5070,9 @@ function canonicalLocation(value) {
 }
 function suggestedSkuLocation(sku) {
  const value=String(sku||"").normalize("NFKC").trim().replace(/[\u2010-\u2015\u2212]/g,"-");
+ // A tote-only SKU is also a location suggestion; preserve its original spelling.
+ const toteOnly=value.match(/^A\s*-?\s*0*(1[0-6]|[1-9])$/i);
+ if(toteOnly) return "A"+Number(toteOnly[1]);
  // Accept old labels with a slash, one or more dashes, or spaces while keeping the original SKU unchanged.
  const tote=value.match(/^A\s*-?\s*0*(1[0-6]|[1-9])(?:(?:\s*[-/_:]\s*)+|\s+)\d+$/i);
  if(tote) return "A"+Number(tote[1]);
@@ -5236,16 +5239,16 @@ $("cancelEbayReview").onclick = () => {
 $("applyEbayLive").onclick = work(async () => {
  const review = pendingLiveReview;
  if (!review) throw Error("Run the live refresh again before applying changes.");
- if (!confirm("Apply this reviewed refresh? " + review.added.length + " listings will be added, " + review.changed.length + " matched listings will be updated, and " + review.missing.length + " absent records will remain saved and move to the Not Found review section. Tote locations, physical checks, notes and your own saved photos will be preserved.")) return;
+ if (!confirm("Apply this reviewed refresh? " + review.added.length + " listings will be added, " + review.changed.length + " matched listings will be updated, and " + review.missing.length + " absent records will remain saved and move to the Not Found review section. Existing tote locations, physical checks, notes and your own saved photos will be preserved. Empty unchecked locations will be filled from recognized SKUs and remain unverified.")) return;
  const next = copy(state), time = stamp();
  const byEbay = new Map(next.items.filter(x => x.ebayId).map(x => [x.ebayId,x]));
  for (const live of review.listings) {
   const old = byEbay.get(live.item_id);
   if (old) {
    const ix = next.items.findIndex(x => x.id === old.id);
-   next.items[ix] = normalizeItem({...old,title:live.title.trim(),ebayId:live.item_id,sku:live.sku.trim() || old.sku,status:"Active",price:live.price,listingQty:live.quantity_available,statusAt:time,source:"Live eBay",updatedAt:time});
+   next.items[ix] = normalizeItem({...old,title:live.title.trim(),ebayId:live.item_id,sku:live.sku.trim() || old.sku,location:old.location || (old.checkedAt ? "" : suggestedSkuLocation(live.sku.trim() || old.sku)),status:"Active",price:live.price,listingQty:live.quantity_available,statusAt:time,source:"Live eBay",updatedAt:time});
   } else {
-   const added = normalizeItem({id:uid(),title:live.title.trim(),ebayId:live.item_id,sku:live.sku.trim(),status:"Active",price:live.price,listingQty:live.quantity_available,physicalQty:null,location:"",notes:"",photos:[],checkedAt:"",statusAt:time,source:"Live eBay",updatedAt:time});
+   const added = normalizeItem({id:uid(),title:live.title.trim(),ebayId:live.item_id,sku:live.sku.trim(),status:"Active",price:live.price,listingQty:live.quantity_available,physicalQty:null,location:suggestedSkuLocation(live.sku.trim()),notes:"",photos:[],checkedAt:"",statusAt:time,source:"Live eBay",updatedAt:time});
    next.items.push(added); byEbay.set(added.ebayId,added);
   }
  }
