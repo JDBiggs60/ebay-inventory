@@ -79,7 +79,7 @@ textarea{min-height:100px}
 input[type=checkbox]{width:22px;height:22px;vertical-align:middle;margin-right:10px}
 .field-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 15px}
 .wide{grid-column:1/-1}
-dialog{width:720px;max-width:calc(100% - 24px);max-height:92vh;border:0;border-radius:18px;padding:22px;color:#1b2c43}
+dialog{overflow-y:auto;width:720px;max-width:calc(100% - 24px);max-height:92vh;border:0;border-radius:18px;padding:22px;color:#1b2c43}
 dialog::backdrop{background:#10223dc0}
 .photos{display:flex;gap:12px;flex-wrap:wrap}
 .photos>div{width:145px}
@@ -525,7 +525,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <button id="floatingHome" type="button" class="primary" data-view="home" aria-label="Return to home screen" hidden>🏠 Home</button>
  </nav>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.12.27 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.12.28 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -638,7 +638,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <div class="actions">
    <button id="saveItemButton" class="primary" type="submit">Save Item</button>
    <button type="button" class="secondary" data-close="editor">Cancel</button>
-   <button id="editLiveListing" type="button" class="secondary" hidden>Update location / price on eBay</button>
+   <button id="editLiveListing" type="button" class="secondary" hidden>Update location / price / Best Offer on eBay</button>
    <button id="itemLabel" type="button" class="secondary" hidden>QR Label (saved item)</button>
    <button id="removeItem" type="button" class="danger" hidden>Remove Record</button>
   </div>
@@ -646,7 +646,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
 </dialog>
 
 <dialog id="liveListingEditor">
- <h2>Update location / price on eBay</h2>
+ <h2>Update location / price / Best Offer on eBay</h2>
  <p id="liveEditTitle"></p>
  <p>For single-product Buy It Now listings in USD. Storage location changes your private custom label, preserving the inventory number. It does not change the shipping origin shown to buyers.</p>
  <label><input id="liveEditLocationCheck" type="checkbox"> Update storage location</label>
@@ -655,7 +655,17 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
  <label><input id="liveEditPriceCheck" type="checkbox"> Update Buy It Now price</label>
  <label for="liveEditPrice">New price (USD)</label>
  <input id="liveEditPrice" type="number" min="0.01" max="99999999" step="0.01">
- <p class="small">Listings with automatic Best Offer thresholds need their price changed on eBay in this first version. Ending listings and changing quantities are not available here.</p>
+ <div class="panel">
+ <button id="liveEditLoadOffers" type="button" class="secondary">Load current eBay offer settings</button>
+ <label><input id="liveEditOffersCheck" type="checkbox"> Update Best Offer settings</label>
+ <label><input id="liveEditOffersEnabled" type="checkbox"> Allow buyers to make Best Offers</label>
+ <label for="liveEditMinimum">Automatically decline offers below (USD)</label>
+ <input id="liveEditMinimum" type="number" min="0.01" step="0.01" placeholder="Blank = automatic decline off">
+ <label for="liveEditAutoAccept">Automatically accept offers at or above (USD)</label>
+ <input id="liveEditAutoAccept" type="number" min="0.01" step="0.01" placeholder="Blank = automatic acceptance off">
+ <p class="small">Load your current settings before changing them. Blank amounts turn those automatic rules off. To turn Best Offer off, uncheck Allow buyers and clear both amounts. Amounts must be below the listing price; auto-decline must be below auto-accept.</p>
+ </div>
+ <p class="small">Price edits preserve your current offer settings unless you select new ones. eBay may require two updates: price first, then offer amounts. If the second step fails, the app reports an incomplete update. Ending listings and quantity changes are unavailable.</p>
  <p id="liveEditMessage" class="notice" role="status" aria-live="polite"></p>
  <div class="actions">
   <button id="liveEditPreviewButton" type="button" class="secondary">Preview eBay changes</button>
@@ -5355,7 +5365,8 @@ function liveEditDraft(){
  const body={item_id:item.ebayId};
  if($("liveEditLocationCheck").checked){body.location=canonicalLocation($("liveEditLocation").value.trim());if(!body.location)throw Error("Enter a tote or storage location.");}
  if($("liveEditPriceCheck").checked){body.price=$("liveEditPrice").value.trim();if(!body.price)throw Error("Enter a price.");}
- if(!("location" in body) && !("price" in body))throw Error("Choose location, price, or both.");
+ if($("liveEditOffersCheck").checked)body.offers={enabled:$("liveEditOffersEnabled").checked,minimum:$("liveEditMinimum").value.trim()||null,auto_accept:$("liveEditAutoAccept").value.trim()||null};
+ if(!("location" in body) && !("price" in body) && !("offers" in body))throw Error("Choose location, price or Best Offer settings.");
  return body;
 }
 async function liveEditRequest(body){
@@ -5369,10 +5380,10 @@ async function liveEditRequest(body){
 }
 function runLiveEdit(fn){return async()=>{
  if(locked)return;locked=true;
- $("liveEditPreviewButton").disabled=true;$("liveEditApply").disabled=true;$("liveEditRetrySave").disabled=true;
+ $("liveEditLoadOffers").disabled=true;$("liveEditPreviewButton").disabled=true;$("liveEditApply").disabled=true;$("liveEditRetrySave").disabled=true;
  document.body.classList.add("busy");
  try{requireCurrentCloudInventory();await fn();}catch(e){liveEditMessage(e.message || "The operation failed.");}
- finally{locked=false;document.body.classList.remove("busy");$("liveEditPreviewButton").disabled=Boolean(liveEditSaved);$("liveEditApply").disabled=!liveEditPreview || Boolean(liveEditSaved);$("liveEditRetrySave").disabled=!liveEditSaved;}
+ finally{$("liveEditLoadOffers").disabled=Boolean(liveEditSaved);locked=false;document.body.classList.remove("busy");$("liveEditPreviewButton").disabled=Boolean(liveEditSaved);$("liveEditApply").disabled=!liveEditPreview || Boolean(liveEditSaved);$("liveEditRetrySave").disabled=!liveEditSaved;}
 };}
 $("editLiveListing").onclick=()=>{
  if(locked)return;
@@ -5381,18 +5392,27 @@ $("editLiveListing").onclick=()=>{
  if(dirty){editorMessage("Save your app changes first, then reopen Update location / price on eBay.",true);return;}
  liveEditId=item.id;liveEditSaved=null;invalidateLivePreview();
  $("liveEditTitle").textContent=item.title+" · eBay # "+item.ebayId;
- $("liveEditLocationCheck").checked=true;$("liveEditPriceCheck").checked=false;
+ $("liveEditLocationCheck").checked=true;$("liveEditPriceCheck").checked=false;$("liveEditOffersCheck").checked=false;$("liveEditOffersEnabled").checked=false;$("liveEditMinimum").value="";$("liveEditAutoAccept").value="";
  $("liveEditLocation").value=item.location;$("liveEditPrice").value=item.price===null?"":Number(item.price).toFixed(2);
  $("liveEditRetrySave").hidden=true;$("liveEditPreviewButton").disabled=false;
  liveEditMessage("Choose what to change, then preview the current eBay values. Preview does not change the listing.");
  $("liveListingEditor").showModal();
 };
-for(const id of ["liveEditLocationCheck","liveEditPriceCheck","liveEditLocation","liveEditPrice"]){$(id).addEventListener("input",invalidateLivePreview);}
+for(const id of ["liveEditLocationCheck","liveEditPriceCheck","liveEditLocation","liveEditPrice","liveEditOffersCheck","liveEditOffersEnabled","liveEditMinimum","liveEditAutoAccept"]){$(id).addEventListener("input",invalidateLivePreview);}
+function offerSummary(x){return "Best Offer: "+(x.best_offer_enabled?"On":"Off")+" · Auto-decline below: "+(x.minimum_offer===null?"Off":"$"+x.minimum_offer)+" · Auto-accept at or above: "+(x.auto_accept===null?"Off":"$"+x.auto_accept);}
+function fillOfferInputs(x){$("liveEditOffersEnabled").checked=x.best_offer_enabled;$("liveEditMinimum").value=x.minimum_offer??"";$("liveEditAutoAccept").value=x.auto_accept??"";}
+$("liveEditLoadOffers").onclick=runLiveEdit(async()=>{
+ invalidateLivePreview();const item=state.items.find(x=>x.id===liveEditId);
+ liveEditMessage("Reading current price and Best Offer settings…");
+ const result=await liveEditRequest({action:"read",item_id:item.ebayId});fillOfferInputs(result.current);
+ if(!$("liveEditPriceCheck").checked)$("liveEditPrice").value=result.current.price;
+ liveEditMessage("Current eBay price: $"+result.current.price+"\n"+offerSummary(result.current)+"\nCheck Update Best Offer settings only if you want to change these amounts. Otherwise price edits preserve them.");
+});
 $("liveEditPreviewButton").onclick=runLiveEdit(async()=>{
  invalidateLivePreview();liveEditMessage("Reading the current eBay listing…");
  const draft=liveEditDraft(),result=await liveEditRequest({action:"preview",...draft});
  liveEditPreview={draft,result};
- liveEditMessage(result.current.title+"\nCurrent eBay label: "+(result.current.sku||"None")+"\nNew eBay label: "+result.target.sku+"\nCurrent eBay price: $"+result.current.price+"\nNew eBay price: $"+result.target.price+(result.target.location?"\nApp storage location after saving: "+result.target.location:"")+"\n\nCheck these values, then press Confirm change on eBay. Physical verification is cleared if you move the item.");
+ liveEditMessage(result.current.title+"\nCurrent eBay label: "+(result.current.sku||"None")+"\nNew eBay label: "+result.target.sku+"\nCurrent eBay price: $"+result.current.price+"\nNew eBay price: $"+result.target.price+(result.target.location?"\nApp storage location after saving: "+result.target.location:"")+"\nCurrent "+offerSummary(result.current)+"\nProposed "+offerSummary(result.target)+"\n\nCheck these values, then press Confirm change on eBay. Physical verification is cleared if you move the item.");
 });
 async function saveVerifiedLiveEdit(){
  const item=state.items.find(x=>x.id===liveEditId);if(!item)throw Error("eBay was updated, but this app record is missing. Refresh and review the listing.");
@@ -5400,7 +5420,7 @@ async function saveVerifiedLiveEdit(){
  if(item.ebayId!==original.ebayId || item.sku!==original.sku || item.price!==original.price || item.location!==original.location)throw Error("eBay was updated, but this inventory record changed. Refresh and review it before syncing.");
  const changed={...item,sku:result.current.sku,price:Number(result.current.price),updatedAt:stamp()};
  if(draft.location!==undefined)changed.location=result.target.location;
- changed.notes=appendActivity(changed.notes,"eBay edit verified: label "+result.current.sku+"; price $"+result.current.price+".");
+ changed.notes=appendActivity(changed.notes,"eBay edit verified: label "+result.current.sku+"; price $"+result.current.price+"; "+offerSummary(result.current)+".");
  const updated=normalizeItem(recordLocationChange(invalidateMovedLocation(changed,item),item));
  await mergeItems([updated]);
  liveEditSaved=null;$("liveEditRetrySave").hidden=true;$("liveListingEditor").close();$("editor").close();
@@ -5410,11 +5430,11 @@ $("liveEditApply").onclick=runLiveEdit(async()=>{
  const preview=liveEditPreview;if(!preview)throw Error("Preview the changes first.");
  if(JSON.stringify(liveEditDraft())!==JSON.stringify(preview.draft)){invalidateLivePreview();throw Error("Your entries changed. Preview again.");}
  const original={...state.items.find(x=>x.id===liveEditId)};
- if(!confirm("Change this eBay listing?\n"+preview.result.current.title+"\nLabel: "+preview.result.current.sku+" → "+preview.result.target.sku+"\nPrice: $"+preview.result.current.price+" → $"+preview.result.target.price))return;
+ if(!confirm("Change this eBay listing?\n"+preview.result.current.title+"\nLabel: "+preview.result.current.sku+" → "+preview.result.target.sku+"\nPrice: $"+preview.result.current.price+" → $"+preview.result.target.price+"\n"+offerSummary(preview.result.target)))return;
  invalidateLivePreview();liveEditMessage("Sending the change to eBay and checking it…");
  let result;
  try{result=await liveEditRequest({action:"apply",...preview.draft,expected:preview.result.current,expires:preview.result.expires,signature:preview.result.signature});}
- catch(e){throw Error(e.message+"\nRead the listing again before sending another edit. If it was changed, preview the same desired values to sync your app.");}
+ catch(e){fillOfferInputs(preview.result.target);$("liveEditOffersCheck").checked=true;throw Error(e.message+"\nThe intended offer settings remain filled in. Preview again to read the actual listing and finish only the remaining changes. Closing or reloading loses this recovery draft.");}
  if(result.verified!==true)throw Error("eBay confirmation is missing. Check the listing before trying again.");
  liveEditSaved={result,draft:preview.draft,original};$("liveEditRetrySave").hidden=false;
  liveEditMessage("eBay saved the change. Saving the confirmed values in your app…");
