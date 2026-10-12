@@ -162,7 +162,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
 <div id="application" hidden>
  <div class="toolbar">
   <button id="back" class="secondary" data-view="home" hidden>← Home</button>
-  <span class="small">Cloud inventory · read-only live eBay connection</span><button id="reloadCloud" class="secondary">Refresh</button><button id="migrateLocal" class="secondary" hidden>Copy previous browser inventory</button><button id="logout" class="secondary">Sign out</button>
+  <span class="small">Cloud inventory · eBay refresh and confirmed location / price edits</span><button id="reloadCloud" class="secondary">Refresh</button><button id="migrateLocal" class="secondary" hidden>Copy previous browser inventory</button><button id="logout" class="secondary">Sign out</button>
  </div>
  <div id="cloudSafetyLock" class="notice error" hidden>
   <strong>Cloud inventory is not current.</strong>
@@ -525,7 +525,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <button id="floatingHome" type="button" class="primary" data-view="home" aria-label="Return to home screen" hidden>🏠 Home</button>
  </nav>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.10.26 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.12.27 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -638,10 +638,31 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <div class="actions">
    <button id="saveItemButton" class="primary" type="submit">Save Item</button>
    <button type="button" class="secondary" data-close="editor">Cancel</button>
+   <button id="editLiveListing" type="button" class="secondary" hidden>Update location / price on eBay</button>
    <button id="itemLabel" type="button" class="secondary" hidden>QR Label (saved item)</button>
    <button id="removeItem" type="button" class="danger" hidden>Remove Record</button>
   </div>
  </form>
+</dialog>
+
+<dialog id="liveListingEditor">
+ <h2>Update location / price on eBay</h2>
+ <p id="liveEditTitle"></p>
+ <p>For single-product Buy It Now listings in USD. Storage location changes your private custom label, preserving the inventory number. It does not change the shipping origin shown to buyers.</p>
+ <label><input id="liveEditLocationCheck" type="checkbox"> Update storage location</label>
+ <label for="liveEditLocation">New tote / storage location</label>
+ <input id="liveEditLocation" list="toteOptions" maxlength="35" placeholder="A6 or Pattern Box 1">
+ <label><input id="liveEditPriceCheck" type="checkbox"> Update Buy It Now price</label>
+ <label for="liveEditPrice">New price (USD)</label>
+ <input id="liveEditPrice" type="number" min="0.01" max="99999999" step="0.01">
+ <p class="small">Listings with automatic Best Offer thresholds need their price changed on eBay in this first version. Ending listings and changing quantities are not available here.</p>
+ <p id="liveEditMessage" class="notice" role="status" aria-live="polite"></p>
+ <div class="actions">
+  <button id="liveEditPreviewButton" type="button" class="secondary">Preview eBay changes</button>
+  <button id="liveEditApply" type="button" class="primary" disabled>Confirm change on eBay</button>
+  <button id="liveEditRetrySave" type="button" class="secondary" hidden>Retry app save only</button>
+  <button id="liveEditClose" type="button" class="secondary">Close</button>
+ </div>
 </dialog>
 
 <dialog id="checker">
@@ -3662,7 +3683,7 @@ $("packForm").onsubmit = work(async e => {
 const GUIDE_TOPICS = [
  ["Getting started / Home", "Home takes you to the main menu. The top Refresh button reloads saved cloud records; it does not fetch current eBay listings. Sign out ends your login. Floating Home and Top buttons help navigate long screens."],
  ["Verify an Item", "Choose a storage location, take or choose a photograph, search or identify the item, compare it to the saved listing, then select the correct match. Confirm the physical count and location. Never approve an uncertain photo match."],
- ["My Inventory", "Search by item number, SKU, title or location. View / Edit changes this app only. Print Item Label makes a QR label; choose a public link or text-only label for anything shipping to a buyer. Undo physical check removes verification, not the item."],
+ ["My Inventory", "Search by item number, SKU, title or location. Regular Save Item changes this app only. Update location / price on eBay opens a separate live preview and confirmation. Print Item Label makes a QR label; choose a public link or text-only label for anything shipping to a buyer. Undo physical check removes verification, not the item."],
  ["Storage Locations: totes, shelves, cabinets", "The location code can be A1 (tote), P1 (puzzle shelf), M1 (model shelf), C1 or C2 (cabinet). Use C1-S1 for cabinet shelf 1 if useful. Assign an item under View / Edit, then Confirm location / stock. The same audit, labels and printable sheets work for all codes."],
  ["Audit a location", "Open Storage Locations, choose A1, P1, M1 or a cabinet location, then Start Physical Tote Audit (the existing button name). Inspect every item and confirm its saved location and count. Mark expected items missing only after checking carefully; put unmatched finds in REVIEW. Finish the audit when all records and physical items are reconciled."],
  ["Print a storage inventory sheet", "Open a location, choose Print Location Inventory Sheet, and print the checklist with QR code. Lists of up to 12 items use half a page; longer lists use full pages with up to 30 items per page. Only confirmed stock appears. The out-of-date notice compares against the sheet last prepared in this browser, not across devices. Paper printed before this version is not registered automatically."],
@@ -3941,6 +3962,7 @@ function openEditor(id = null, prefill = {}) {
 
  $("removeItem").hidden = !id;
  $("itemLabel").hidden = !id;
+ $("editLiveListing").hidden = !id || !x.ebayId;
  previewPhotos();
  $("editor").showModal();
 }
@@ -5323,6 +5345,85 @@ async function finishEbayReturn(){
  notify("Connected to "+result.username+". Seller identity verified; your tote inventory was preserved.");
 }
 
+// Separate live editor: regular Save Item continues to save app data only.
+let liveEditId=null,liveEditPreview=null,liveEditSaved=null;
+function liveEditMessage(message){$("liveEditMessage").textContent=message;}
+function invalidateLivePreview(){liveEditPreview=null;$("liveEditApply").disabled=true;}
+function liveEditDraft(){
+ const item=state.items.find(x=>x.id===liveEditId);
+ if(!item || !/^\d{9,15}$/.test(item.ebayId))throw Error("Open a saved item linked to eBay first.");
+ const body={item_id:item.ebayId};
+ if($("liveEditLocationCheck").checked){body.location=canonicalLocation($("liveEditLocation").value.trim());if(!body.location)throw Error("Enter a tote or storage location.");}
+ if($("liveEditPriceCheck").checked){body.price=$("liveEditPrice").value.trim();if(!body.price)throw Error("Enter a price.");}
+ if(!("location" in body) && !("price" in body))throw Error("Choose location, price, or both.");
+ return body;
+}
+async function liveEditRequest(body){
+ const session=await cloud.auth.getSession();
+ if(session.error || !session.data.session)throw Error("Sign in to this inventory app first.");
+ const response=await fetch("https://tgdyvyyggybatctevywf.supabase.co/functions/v1/ebay-listing-edit",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+session.data.session.access_token},body:JSON.stringify(body),signal:AbortSignal.timeout(85000)});
+ const data=await response.json().catch(()=>({error:"The listing edit server returned an unreadable response."}));
+ if(!response.ok || !data.success)throw Error(data.error || "Listing editing is unavailable. Check that ebay-listing-edit is deployed.");
+ if(data.seller!=="willowchairman" || data.current?.item_id!==body.item_id || !data.target || data.action!==body.action)throw Error("The eBay response did not match this item.");
+ return data;
+}
+function runLiveEdit(fn){return async()=>{
+ if(locked)return;locked=true;
+ $("liveEditPreviewButton").disabled=true;$("liveEditApply").disabled=true;$("liveEditRetrySave").disabled=true;
+ document.body.classList.add("busy");
+ try{requireCurrentCloudInventory();await fn();}catch(e){liveEditMessage(e.message || "The operation failed.");}
+ finally{locked=false;document.body.classList.remove("busy");$("liveEditPreviewButton").disabled=Boolean(liveEditSaved);$("liveEditApply").disabled=!liveEditPreview || Boolean(liveEditSaved);$("liveEditRetrySave").disabled=!liveEditSaved;}
+};}
+$("editLiveListing").onclick=()=>{
+ if(locked)return;
+ const item=state.items.find(x=>x.id===editingId);if(!item?.ebayId)return;
+ const dirty=["title","ebayId","sku","status","price","listingQty","location","notes"].some(k=>$("f_"+k).value!==String(item[k]??"")) || JSON.stringify(editPhotos)!==JSON.stringify(item.photos);
+ if(dirty){editorMessage("Save your app changes first, then reopen Update location / price on eBay.",true);return;}
+ liveEditId=item.id;liveEditSaved=null;invalidateLivePreview();
+ $("liveEditTitle").textContent=item.title+" · eBay # "+item.ebayId;
+ $("liveEditLocationCheck").checked=true;$("liveEditPriceCheck").checked=false;
+ $("liveEditLocation").value=item.location;$("liveEditPrice").value=item.price===null?"":Number(item.price).toFixed(2);
+ $("liveEditRetrySave").hidden=true;$("liveEditPreviewButton").disabled=false;
+ liveEditMessage("Choose what to change, then preview the current eBay values. Preview does not change the listing.");
+ $("liveListingEditor").showModal();
+};
+for(const id of ["liveEditLocationCheck","liveEditPriceCheck","liveEditLocation","liveEditPrice"]){$(id).addEventListener("input",invalidateLivePreview);}
+$("liveEditPreviewButton").onclick=runLiveEdit(async()=>{
+ invalidateLivePreview();liveEditMessage("Reading the current eBay listing…");
+ const draft=liveEditDraft(),result=await liveEditRequest({action:"preview",...draft});
+ liveEditPreview={draft,result};
+ liveEditMessage(result.current.title+"\nCurrent eBay label: "+(result.current.sku||"None")+"\nNew eBay label: "+result.target.sku+"\nCurrent eBay price: $"+result.current.price+"\nNew eBay price: $"+result.target.price+(result.target.location?"\nApp storage location after saving: "+result.target.location:"")+"\n\nCheck these values, then press Confirm change on eBay. Physical verification is cleared if you move the item.");
+});
+async function saveVerifiedLiveEdit(){
+ const item=state.items.find(x=>x.id===liveEditId);if(!item)throw Error("eBay was updated, but this app record is missing. Refresh and review the listing.");
+ const {result,draft,original}=liveEditSaved;
+ if(item.ebayId!==original.ebayId || item.sku!==original.sku || item.price!==original.price || item.location!==original.location)throw Error("eBay was updated, but this inventory record changed. Refresh and review it before syncing.");
+ const changed={...item,sku:result.current.sku,price:Number(result.current.price),updatedAt:stamp()};
+ if(draft.location!==undefined)changed.location=result.target.location;
+ changed.notes=appendActivity(changed.notes,"eBay edit verified: label "+result.current.sku+"; price $"+result.current.price+".");
+ const updated=normalizeItem(recordLocationChange(invalidateMovedLocation(changed,item),item));
+ await mergeItems([updated]);
+ liveEditSaved=null;$("liveEditRetrySave").hidden=true;$("liveListingEditor").close();$("editor").close();
+ notify("eBay change verified and saved in your app. Location changes require a fresh physical check.");
+}
+$("liveEditApply").onclick=runLiveEdit(async()=>{
+ const preview=liveEditPreview;if(!preview)throw Error("Preview the changes first.");
+ if(JSON.stringify(liveEditDraft())!==JSON.stringify(preview.draft)){invalidateLivePreview();throw Error("Your entries changed. Preview again.");}
+ const original={...state.items.find(x=>x.id===liveEditId)};
+ if(!confirm("Change this eBay listing?\n"+preview.result.current.title+"\nLabel: "+preview.result.current.sku+" → "+preview.result.target.sku+"\nPrice: $"+preview.result.current.price+" → $"+preview.result.target.price))return;
+ invalidateLivePreview();liveEditMessage("Sending the change to eBay and checking it…");
+ let result;
+ try{result=await liveEditRequest({action:"apply",...preview.draft,expected:preview.result.current,expires:preview.result.expires,signature:preview.result.signature});}
+ catch(e){throw Error(e.message+"\nRead the listing again before sending another edit. If it was changed, preview the same desired values to sync your app.");}
+ if(result.verified!==true)throw Error("eBay confirmation is missing. Check the listing before trying again.");
+ liveEditSaved={result,draft:preview.draft,original};$("liveEditRetrySave").hidden=false;
+ liveEditMessage("eBay saved the change. Saving the confirmed values in your app…");
+ try{await saveVerifiedLiveEdit();}catch(e){throw Error("eBay WAS updated. Your app save failed: "+e.message+"\nRetry app save sends no further eBay edits. If you refresh instead, use eBay Refresh to sync label/price and check the app location separately.");}
+});
+$("liveEditRetrySave").onclick=runLiveEdit(saveVerifiedLiveEdit);
+$("liveEditClose").onclick=()=>{if(locked)return;if(liveEditSaved && !confirm("eBay was updated, but the app save is pending. Close anyway? You will need to sync the app afterward."))return;$("liveListingEditor").close();};
+$("liveListingEditor").addEventListener("cancel",e=>{if(locked || liveEditSaved)e.preventDefault();});
+
 async function start() {
  if (/\/(electronics-inventory|old-carpenters-notepad)(\/|$)/i.test(location.pathname)) {
   throw Error(
@@ -5406,3 +5507,4 @@ start().catch(e => {
  <!-- Restart GitHub Pages deployment -->
 </body>
 </html>
+
