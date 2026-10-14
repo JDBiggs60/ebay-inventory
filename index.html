@@ -525,7 +525,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <button id="floatingHome" type="button" class="primary" data-view="home" aria-label="Return to home screen" hidden>🏠 Home</button>
  </nav>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.12.28 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.13.29 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -541,10 +541,12 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
  </form>
 </dialog>
 <dialog id="labelDialog">
- <h2>40 × 30 mm Item / Tote Label</h2>
+ <h2 id="labelHeading">Item / Tote Label</h2>
+ <label for="labelPrinter">Printer / label size</label>
+ <select id="labelPrinter"><option value="m220">M220 — 40 × 30 mm</option><option value="brother">Brother QL-810W — 90.3 × 29 mm</option></select>
  <label for="labelMode">Label destination</label><select id="labelMode"><option value="inventory">Private inventory app (keep in your workshop)</option><option value="public">Public eBay listing (item labels only)</option><option value="text">Text only (no QR link)</option></select><p id="labelDestination" class="small"></p>
  <img id="labelPreview" alt="Label preview" style="width:100%;max-width:480px;border:1px solid #ddd">
- <p class="small">Download PDF, then import it into your M220 printer app. Choose 40 × 30 mm, landscape, one copy, and no added margins. PNG is available if your printer app imports pictures. Scan the QR with your phone camera to open this app; sign in if needed. Labels use saved details—save item changes first.</p>
+ <p id="labelPrintHelp" class="small">Download PDF, then import it into your M220 printer app. Choose 40 × 30 mm, landscape, one copy, and no added margins. PNG is available if your printer app imports pictures. Scan the QR with your phone camera to open this app; sign in if needed. Labels use saved details—save item changes first.</p>
  <div class="actions"><button id="labelPdf" class="primary">Download Label PDF</button><button id="labelPng" class="secondary">Download Label PNG</button><button class="secondary" data-close="labelDialog">Close</button></div>
 </dialog>
 <dialog id="packDialog"><form id="packForm">
@@ -4734,6 +4736,35 @@ $("newItem").onclick = () => openEditor();
 
 
 let labelCanvas = null, labelFilename = "eBay_Label";
+try { $("labelPrinter").value = localStorage.getItem("ebayLabelPrinter") === "brother" ? "brother" : "m220"; } catch(e) {}
+function renderBrotherLabel(canvas, qr, destination, item, value, mode) {
+ canvas.width=1806; canvas.height=580;
+ const ctx=canvas.getContext("2d");ctx.fillStyle="white";ctx.fillRect(0,0,canvas.width,canvas.height);ctx.fillStyle="black";
+ function line(text,x,y,width,size,min=34) {
+  text=String(text);ctx.font="bold "+size+"px Arial";
+  while(ctx.measureText(text).width>width && size>min){size--;ctx.font="bold "+size+"px Arial";}
+  while(ctx.measureText(text).width>width && text.length>1)text=text.slice(0,-2)+"…";
+  ctx.fillText(text,x,y);
+ }
+ const left=60,width=1120,title=item?item.title:"Tote "+value;
+ ctx.font="bold 64px Arial";
+ let lines=[""];
+ for(const word of title.split(/\s+/)){const i=lines.length-1,t=(lines[i]+" "+word).trim();if(ctx.measureText(t).width>width && lines[i])lines.push(word);else lines[i]=t;}
+ if(lines.length>2)lines=[lines[0],lines.slice(1).join(" ")];
+ lines.slice(0,2).forEach((t,i)=>line(t,left,110+i*76,width,64,44));
+ const loc=item?(item.location||suggestedSkuLocation(item.sku)||"Unassigned"):value;
+ const prefix=item&&!item.location&&suggestedSkuLocation(item.sku)?"SUGGESTED: ":"LOCATION: ";
+ line(mode==="inventory"?prefix+loc:"ITEM LABEL",left,290,width,76,42);
+ line(item?"SKU: "+(item.sku||"NO SKU"):"STORAGE: "+value,left,375,width,60,38);
+ line(item?"EBAY: "+(item.ebayId||"NOT LINKED"):"SCAN FOR LOCATION CONTENTS",left,450,width,48,34);
+ line("OLD CARPENTER",left,520,width,42,34);
+ if(destination){
+  const n=qr.getModuleCount(),cell=Math.floor(480/(n+8)),side=(n+8)*cell;
+  const ox=1230+Math.floor((480-side)/2)+4*cell,oy=50+Math.floor((480-side)/2)+4*cell;
+  for(let y=0;y<n;y++)for(let x=0;x<n;x++)if(qr.isDark(y,x))ctx.fillRect(ox+x*cell,oy+y*cell,cell,cell);
+ }else line("TEXT ONLY",1250,310,460,54);
+ canvas.labelWidthMm=90.3;canvas.labelHeightMm=29;
+}
 function labelUrl(key, value) {
  const url = new URL(location.origin + location.pathname);
  url.hash = new URLSearchParams({[key]:value}).toString();
@@ -4816,8 +4847,13 @@ function makeLabel(item, tote, mode = "inventory") {
  fit("OLD CARPENTER",28,558,410,40,true,30);
  if(destination) fit(mode === "public" ? "EBAY LISTING" : "INVENTORY",500,570,260,30,true,26);
  else fit("TEXT ONLY",500,570,260,30,true,26);
+ const brother=$("labelPrinter").value==="brother";
+ if(brother) renderBrotherLabel(canvas,qr,destination,item,value,mode);
+ else {canvas.labelWidthMm=40;canvas.labelHeightMm=30;}
+ $("labelHeading").textContent=brother?"Brother — 90.3 × 29 mm Item / Tote Label":"M220 — 40 × 30 mm Item / Tote Label";
+ $("labelPrintHelp").textContent=brother?"Download the PDF, open it, and print with Brother QL-810W. Choose the 1.1 × 3.5 inch (29 × 90.3 mm) paper, landscape, Actual size / 100%, and one copy. Test the printed QR with your phone. Labels use saved details—save changes first.":"Download PDF, then import it into your M220 printer app. Choose 40 × 30 mm, landscape, one copy, and no added margins. PNG is available for picture imports. Labels use saved details—save changes first.";
  labelCanvas=canvas;labelFilename="Ebay_"+(item?"Item_":"Tote_")+value.replace(/[^a-z0-9_-]/gi,"_");
- $("labelPreview").src=canvas.toDataURL("image/png");$("labelDialog").showModal();
+ $("labelPreview").src=canvas.toDataURL("image/png");if(!$("labelDialog").open)$("labelDialog").showModal();
 }
 $("itemLabel").onclick=work(()=>{
  const x=state.items.find(x=>x.id===editingId);
@@ -4831,12 +4867,17 @@ $("labelMode").onchange = work(() => {
  try { makeLabel(lastLabelItem,lastLabelTote,$("labelMode").value); }
  catch(e) { $("labelMode").value = previous; throw e; }
 });
+$("labelPrinter").onchange=work(()=>{
+ makeLabel(lastLabelItem,lastLabelTote,$("labelMode").value);
+ try {localStorage.setItem("ebayLabelPrinter",$("labelPrinter").value);}catch(e){}
+});
 $("labelPng").onclick=work(async()=>{
  if(!labelCanvas) return;
  const blob=await new Promise(resolve=>labelCanvas.toBlob(resolve,"image/png"));
  download(labelFilename+".png",blob,"image/png");
 });
 function labelPdfBytes(canvas) {
+ const pw=(canvas.labelWidthMm||40)*72/25.4,ph=(canvas.labelHeightMm||30)*72/25.4;
  const jpeg=Uint8Array.from(atob(canvas.toDataURL("image/jpeg",1).split(",")[1]),c=>c.charCodeAt(0));
  const enc=new TextEncoder(), chunks=[], offsets=[0];let size=0;
  const add=b=>{if(typeof b==="string") b=enc.encode(b);chunks.push(b);size+=b.length;};
@@ -4844,9 +4885,9 @@ function labelPdfBytes(canvas) {
  add("%PDF-1.4\n");
  object(1,"<< /Type /Catalog /Pages 2 0 R >>");
  object(2,"<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
- object(3,"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 113.385827 85.039370] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>");
- offsets[4]=size;add("4 0 obj\n<< /Type /XObject /Subtype /Image /Width 800 /Height 600 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length "+jpeg.length+" >>\nstream\n");add(jpeg);add("\nendstream\nendobj\n");
- const stream="q\n113.385827 0 0 85.039370 0 0 cm\n/Im0 Do\nQ\n";
+ object(3,"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 "+pw+" "+ph+"] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>");
+ offsets[4]=size;add("4 0 obj\n<< /Type /XObject /Subtype /Image /Width "+canvas.width+" /Height "+canvas.height+" /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length "+jpeg.length+" >>\nstream\n");add(jpeg);add("\nendstream\nendobj\n");
+ const stream="q\n"+pw+" 0 0 "+ph+" 0 0 cm\n/Im0 Do\nQ\n";
  object(5,"<< /Length "+enc.encode(stream).length+" >>\nstream\n"+stream+"endstream");
  const xref=size;add("xref\n0 6\n0000000000 65535 f \n");
  for(let i=1;i<=5;i++) add(String(offsets[i]).padStart(10,"0")+" 00000 n \n");
