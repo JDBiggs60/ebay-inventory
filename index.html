@@ -316,7 +316,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <section id="totePage" hidden>
    <div class="panel">
     <button id="allTotes" class="secondary">← All Totes</button>
-    <h2 id="toteTitle"></h2>
+    <h2 id="toteTitle"></h2><button id="clearanceTote" class="secondary" type="button">Clearance / Restore Prices</button>
     <p id="toteSummary"></p>
     <p id="toteAuditStatus" class="audit-warning"></p><p id="sheetFreshness" class="audit-warning" hidden></p>
     <p class="small">The normal list contains records with this exact saved location. An SKU suggestion is shown separately and is not treated as proof that an item is physically in the tote. Ended or sold records with a confirmed quantity of zero are kept in history but hidden from the normal list.</p>
@@ -525,7 +525,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <button id="floatingHome" type="button" class="primary" data-view="home" aria-label="Return to home screen" hidden>🏠 Home</button>
  </nav>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.13.29 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.15.30 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -640,12 +640,20 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <div class="actions">
    <button id="saveItemButton" class="primary" type="submit">Save Item</button>
    <button type="button" class="secondary" data-close="editor">Cancel</button>
+   <button id="clearanceItem" type="button" class="secondary">Clearance / Restore Price</button>
    <button id="editLiveListing" type="button" class="secondary" hidden>Update location / price / Best Offer on eBay</button>
    <button id="itemLabel" type="button" class="secondary" hidden>QR Label (saved item)</button>
    <button id="removeItem" type="button" class="danger" hidden>Remove Record</button>
   </div>
  </form>
 </dialog>
+
+<dialog id="clearanceDialog"><h2 id="clearanceTitle">Clearance</h2>
+<p>This changes actual Buy It Now prices on eBay. It does not create a scheduled promotion or automatically restore prices. Keep the app open while processing.</p>
+<label for="clearanceMode">Action</label><select id="clearanceMode"><option value="discount">Apply percentage discount</option><option value="restore">Restore recorded original prices</option></select>
+<label for="clearancePercent">Percentage off (type any value, such as 23)</label><input id="clearancePercent" type="number" min="0.01" max="99.99" step="0.01" inputmode="decimal">
+<p>Discounts use the original recorded clearance price, so applying the same percentage twice does not compound. To restore, select Restore and preview. Original prices are kept in item notes; retain those notes.</p>
+<p id="clearanceMessage" role="status" style="white-space:pre-wrap"></p><div id="clearanceRows"></div><div class="actions"><button id="clearancePreview" type="button">Preview live prices</button><button id="clearanceApply" type="button" disabled>Confirm changes on eBay</button><button id="clearanceStop" type="button" hidden>Stop after current item</button><button id="clearanceClose" type="button">Close</button></div></dialog>
 
 <dialog id="liveListingEditor">
  <h2>Update location / price / Best Offer on eBay</h2>
@@ -5484,6 +5492,95 @@ $("liveEditApply").onclick=runLiveEdit(async()=>{
 $("liveEditRetrySave").onclick=runLiveEdit(saveVerifiedLiveEdit);
 $("liveEditClose").onclick=()=>{if(locked)return;if(liveEditSaved && !confirm("eBay was updated, but the app save is pending. Close anyway? You will need to sync the app afterward."))return;$("liveListingEditor").close();};
 $("liveListingEditor").addEventListener("cancel",e=>{if(locked || liveEditSaved)e.preventDefault();});
+
+// Clearance uses the existing signed live-edit endpoint; never sends edits on open/preview.
+let clearanceRows=[],clearanceBusy=false,clearanceStop=false;
+const clearanceMarker=/^\[OC_CLEARANCE_V1 (.+)\]$/m;
+function clearanceSaved(item){try{const v=JSON.parse((item.notes||'').match(clearanceMarker)?.[1]||'null');return v && v.item_id===item.ebayId && /^\d+\.\d{2}$/.test(v.original) && /^\d+\.\d{2}$/.test(v.target)?v:null;}catch{return null;}}
+function clearanceNotes(item,data){const notes=(item.notes||'').replace(clearanceMarker,'').trim();return notes+(data?'\n[OC_CLEARANCE_V1 '+JSON.stringify(data)+']':'');}
+function clearancePrice(original,percent){
+ if(!/^\d{1,2}(?:\.\d{1,2})?$/.test(percent) || Number(percent)<=0 || Number(percent)>=100)throw Error('Enter a percentage above 0 and below 100, with up to two decimal places.');
+ const cents=Math.round(Number(original)*100),basis=Math.round(Number(percent)*100);
+ const reduced=Math.round(cents*(10000-basis)/10000);
+ if(!Number.isSafeInteger(cents)||cents<1||reduced<1||reduced>=cents)throw Error('This discount must reduce the price by at least one cent and leave at least $0.01.');
+ return (reduced/100).toFixed(2);
+}
+function clearanceRender(){
+ $('clearanceRows').innerHTML=clearanceRows.map((r,i)=>'<div class="panel"><label><input type="checkbox" data-clearance-row="'+i+'" '+(r.selected?'checked':'')+' '+(clearanceBusy?'disabled':'')+'> '+esc(r.title)+'</label><p>'+esc(r.ebayId)+' · '+esc(r.status||'Not checked')+'</p></div>').join('');
+ $('clearanceApply').disabled=clearanceBusy||!clearanceRows.some(r=>r.selected&&r.preview);
+ for(const id of ['clearancePercent','clearanceMode','clearancePreview','clearanceClose'])$(id).disabled=clearanceBusy;
+ $('clearanceStop').hidden=!clearanceBusy;
+}
+function clearanceInvalidate(){for(const r of clearanceRows){r.preview=null;r.status='Preview again';}clearanceRender();}
+function openClearance(items,title){
+ if(locked)return;
+ const unique=new Set();clearanceRows=[];
+ for(const x of items){if(!/^\d{9,15}$/.test(x.ebayId)||x.status!=='Active'||archivedZeroStock(x)||notFoundInLatestEbay(x)||unique.has(x.ebayId))continue;unique.add(x.ebayId);clearanceRows.push({id:x.id,ebayId:x.ebayId,title:x.title,selected:true,preview:null,status:clearanceSaved(x)?'Previous clearance recorded — preview to review':'Not checked'});}
+ $('clearanceTitle').textContent=title+' · '+clearanceRows.length+' active linked listings';$('clearanceMessage').textContent='All assigned listings are included regardless of tote search filters. Uncheck anything you want to exclude. Missing/unlinked/inactive records are excluded. Preview reads eBay without changing it.';
+ $('clearancePercent').value='';$('clearanceMode').value='discount';clearanceRender();$('clearanceDialog').showModal();
+}
+$('clearanceTote').onclick=()=>{if(selectedTote)openClearance(assignedToteItems(selectedTote),'Clearance: '+selectedTote);};
+$('clearanceItem').onclick=()=>{
+ const x=state.items.find(x=>x.id===editingId);if(!x||locked)return;
+ if(['title','ebayId','sku','status','price','listingQty','location','notes'].some(k=>$('f_'+k).value!==String(x[k]??''))||JSON.stringify(editPhotos)!==JSON.stringify(x.photos)){editorMessage('Save your app changes before opening clearance.',true);return;}
+ openClearance([x],'Individual item clearance');
+};
+$('clearanceRows').onchange=e=>{const key=e.target.dataset.clearanceRow;if(key===undefined||clearanceBusy)return;clearanceRows[Number(key)].selected=e.target.checked;clearanceRender();};
+$('clearancePercent').oninput=clearanceInvalidate;$('clearanceMode').onchange=clearanceInvalidate;
+$('clearanceClose').onclick=()=>{if(!clearanceBusy)$('clearanceDialog').close();};
+$('clearanceDialog').addEventListener('cancel',e=>{if(clearanceBusy)e.preventDefault();});
+$('clearanceStop').onclick=()=>{clearanceStop=true;$('clearanceMessage').textContent='Stopping after the current listing finishes. Keep this page open.';};
+async function clearanceRun(fn){
+ if(locked)return;locked=true;clearanceBusy=true;clearanceStop=false;clearanceRender();
+ try{requireCurrentCloudInventory();await fn();}catch(e){$('clearanceMessage').textContent=e.message;}
+ finally{clearanceBusy=false;locked=false;clearanceRender();}
+}
+$('clearancePreview').onclick=()=>clearanceRun(async()=>{
+ const percent=$('clearancePercent').value.trim(),restore=$('clearanceMode').value==='restore';
+ if(!restore)clearancePrice('100.00',percent);
+ for(const r of clearanceRows){r.preview=null;if(!r.selected)continue;if(clearanceStop)break;
+ $('clearanceMessage').textContent='Reading '+r.title+'…';
+ try{
+ const item=state.items.find(x=>x.id===r.id);if(!item||item.ebayId!==r.ebayId)throw Error('Inventory identity changed. Reopen clearance.');
+ const saved=clearanceSaved(item),read=await liveEditRequest({action:'read',item_id:r.ebayId}),current=read.current;
+ if(restore&&!saved)throw Error('No original clearance price recorded.');
+ if(saved&&current.price!==saved.original&&current.price!==saved.target)throw Error('Price changed outside this clearance. Review individually on eBay.');
+ const original=saved?saved.original:current.price,target=restore?saved.original:clearancePrice(original,percent);
+ const draft={item_id:r.ebayId,price:target};
+ const preview=await liveEditRequest({action:'preview',...draft});
+ if(preview.current.price!==current.price)throw Error('Price changed while reading. Preview again.');
+ r.preview={draft,result:preview,original,restore,percent};r.status='$'+current.price+' → $'+target+(restore?' · restore original':' · '+percent+'% off original $'+original);
+ }catch(e){r.status='Needs attention: '+e.message;}
+ clearanceRender();
+ }
+ $('clearanceMessage').textContent='Preview complete. Only checked, successfully previewed listings will change. Changes are permanent until restored; shipping is unchanged. Existing Best Offer amounts are preserved; conflicting amounts block the change.';
+});
+$('clearanceApply').onclick=()=>clearanceRun(async()=>{
+ const rows=clearanceRows.filter(r=>r.selected&&r.preview);if(!rows.length)throw Error('Preview first.');
+ if(!confirm('Change actual eBay prices for '+rows.length+' listing(s)? This is not a scheduled promotion. Prices stay reduced until you restore them.'))return;
+ let completed=0;
+ for(const r of rows){if(clearanceStop)break;const plan=r.preview;r.preview=null;
+ try{
+ $('clearanceMessage').textContent='Updating '+r.title+'… Keep this page open.';
+ let item=state.items.find(x=>x.id===r.id);if(!item||item.ebayId!==r.ebayId)throw Error('Inventory identity changed.');
+ // Refresh expiring signatures one at a time; refuse externally changed settings.
+ const fresh=await liveEditRequest({action:'preview',...plan.draft});
+ if(JSON.stringify(fresh.current)!==JSON.stringify(plan.result.current))throw Error('Listing changed after review. Preview again.');
+ const record={item_id:r.ebayId,original:plan.original,target:plan.draft.price,percent:plan.percent,date:stamp()};
+ // Save the recovery price BEFORE any eBay mutation. A failed save sends no edit.
+ if(!plan.restore)await mergeItems([normalizeItem({...item,notes:clearanceNotes(item,record),updatedAt:stamp()})]);
+ const result=await liveEditRequest({action:'apply',...plan.draft,expected:fresh.current,expires:fresh.expires,signature:fresh.signature});
+ if(result.verified!==true||result.current.price!==plan.draft.price)throw Error('Confirmation missing. Check eBay before continuing.');
+ item=state.items.find(x=>x.id===r.id);if(!item||item.ebayId!==r.ebayId)throw Error('eBay changed; app record changed. Refresh eBay in the app.');
+ await mergeItems([normalizeItem({...item,price:Number(result.current.price),notes:clearanceNotes(item,plan.restore?null:record),updatedAt:stamp()})]);
+ r.status='Verified: $'+result.current.price+(plan.restore?' · original restored':' · clearance applied');completed++;
+ }catch(e){r.status='STOPPED — '+e.message+' Read eBay again before retrying. The original price is retained in app notes when recorded.';for(const remaining of rows)remaining.preview=null;$('clearanceMessage').textContent=completed+' verified. Stopped at '+r.title+'. '+r.status;clearanceRender();return;}
+ clearanceRender();
+ }
+ for(const r of clearanceRows)r.preview=null;
+ $('clearanceMessage').textContent=completed+' listing(s) verified and saved.'+(clearanceStop?' Stopped as requested. Preview remaining items again.':'');
+ if($('editor').open)$('editor').close();
+});
 
 async function start() {
  if (/\/(electronics-inventory|old-carpenters-notepad)(\/|$)/i.test(location.pathname)) {
