@@ -316,7 +316,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <section id="totePage" hidden>
    <div class="panel">
     <button id="allTotes" class="secondary">← All Totes</button>
-    <h2 id="toteTitle"></h2><button id="clearanceTote" class="secondary" type="button">Clearance / Restore Prices</button>
+    <h2 id="toteTitle"></h2><button id="autoPriceTote" class="secondary" type="button">Automatic Monthly Discounts</button><button id="clearanceTote" class="secondary" type="button">Clearance / Restore Prices</button>
     <p id="toteSummary"></p>
     <p id="toteAuditStatus" class="audit-warning"></p><p id="sheetFreshness" class="audit-warning" hidden></p>
     <p class="small">The normal list contains records with this exact saved location. An SKU suggestion is shown separately and is not treated as proof that an item is physically in the tote. Ended or sold records with a confirmed quantity of zero are kept in history but hidden from the normal list.</p>
@@ -525,7 +525,7 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <button id="floatingHome" type="button" class="primary" data-view="home" aria-label="Return to home screen" hidden>🏠 Home</button>
  </nav>
 
- <footer>Old Carpenter eBay Inventory · Version 2026.10.15.30 · Independent personal inventory app</footer>
+ <footer>Old Carpenter eBay Inventory · Version 2026.10.17.31 · Independent personal inventory app</footer>
 </div>
 
 <datalist id="toteOptions"></datalist>
@@ -640,13 +640,22 @@ footer{padding:24px;text-align:center;color:#53667e;font-size:14px}
   <div class="actions">
    <button id="saveItemButton" class="primary" type="submit">Save Item</button>
    <button type="button" class="secondary" data-close="editor">Cancel</button>
-   <button id="clearanceItem" type="button" class="secondary">Clearance / Restore Price</button>
+   <button id="autoPriceItem" type="button" class="secondary">Automatic Monthly Discount</button><button id="clearanceItem" type="button" class="secondary">Clearance / Restore Price</button>
    <button id="editLiveListing" type="button" class="secondary" hidden>Update location / price / Best Offer on eBay</button>
    <button id="itemLabel" type="button" class="secondary" hidden>QR Label (saved item)</button>
    <button id="removeItem" type="button" class="danger" hidden>Remove Record</button>
   </div>
  </form>
 </dialog>
+
+<dialog id="autoPriceDialog"><h2 id="autoPriceTitle">Monthly discounts</h2>
+<p>Choose any monthly percentage. Prices stop at the minimum you approve. Shipping is unchanged. New items added to a tote later are not enrolled automatically.</p>
+<label for="autoPricePercent">Monthly percentage off current price</label><input id="autoPricePercent" type="number" min="0.01" max="99.99" step="0.01" inputmode="decimal">
+<label for="autoPriceFloorMode">How to set the minimum</label><select id="autoPriceFloorMode"><option value="amount">Minimum dollar price for each selected item</option><option value="maximum_discount">Maximum total percentage off each item's enrollment price</option></select>
+<label for="autoPriceFloor">Minimum dollars OR maximum total percentage, according to your choice above</label><input id="autoPriceFloor" type="number" min="0.01" step="0.01" inputmode="decimal">
+<p>A 50% maximum total discount on a $20 item sets a $10 minimum. A $5 minimum dollar price sets a $5 minimum on every selected item. Review exceptions individually.</p>
+<p>Manual price changes pause the rule. Unexpected live prices or uncertain updates stop for review. To resume or change a rule, preview and enable again from its individual item; this starts a new month from the current price. This first version excludes listings with automatic Best Offer thresholds.</p>
+<p id="autoPriceMessage" role="status" style="white-space:pre-wrap"></p><div id="autoPriceRows"></div><div class="actions"><button id="autoPricePreview" type="button">Preview rules</button><button id="autoPriceSave" type="button" disabled>Enable reviewed rules</button><button id="autoPriceHistory" type="button">Rules / History / Pause</button><button id="autoPriceClose" type="button">Close</button></div><div id="autoPriceHistoryRows"></div></dialog>
 
 <dialog id="clearanceDialog"><h2 id="clearanceTitle">Clearance</h2>
 <p>This changes actual Buy It Now prices on eBay. It does not create a scheduled promotion or automatically restore prices. Keep the app open while processing.</p>
@@ -5581,6 +5590,55 @@ $('clearanceApply').onclick=()=>clearanceRun(async()=>{
  $('clearanceMessage').textContent=completed+' listing(s) verified and saved.'+(clearanceStop?' Stopped as requested. Preview remaining items again.':'');
  if($('editor').open)$('editor').close();
 });
+
+// Automatic rules are saved on the server. Opening and previewing never edits eBay.
+let autoPriceRows=[],autoPriceBusy=false;
+async function autoPriceRequest(body){
+ const session=await cloud.auth.getSession();if(session.error||!session.data.session)throw Error('Sign in first.');
+ const r=await fetch('https://tgdyvyyggybatctevywf.supabase.co/functions/v1/ebay-auto-price',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+session.data.session.access_token},body:JSON.stringify(body),signal:AbortSignal.timeout(110000)});
+ const data=await r.json().catch(()=>({error:'Automatic pricing server is unavailable.'}));if(!r.ok||!data.success)throw Error(data.error||'Automatic pricing is not installed yet.');return data;
+}
+function autoPriceRender(){
+ $('autoPriceRows').innerHTML=autoPriceRows.map((r,i)=>'<div class="panel"><label><input type="checkbox" data-auto-price="'+i+'" '+(r.selected?'checked':'')+' '+(autoPriceBusy?'disabled':'')+'> '+esc(r.title)+'</label><p>'+esc(r.ebayId)+' · '+esc(r.message||'Not previewed')+'</p></div>').join('');
+ for(const id of ['autoPricePercent','autoPriceFloorMode','autoPriceFloor','autoPricePreview','autoPriceHistory','autoPriceClose'])$(id).disabled=autoPriceBusy;
+ $('autoPriceSave').disabled=autoPriceBusy||!autoPriceRows.some(r=>r.selected&&r.preview);
+}
+function autoPriceOpen(items,title){
+ if(locked)return;const seen=new Set();autoPriceRows=[];
+ for(const x of items){if(x.status!=='Active'||!/^\d{9,15}$/.test(x.ebayId)||archivedZeroStock(x)||notFoundInLatestEbay(x)||seen.has(x.ebayId))continue;seen.add(x.ebayId);autoPriceRows.push({ebayId:x.ebayId,title:x.title,selected:true,preview:null});}
+ $('autoPriceTitle').textContent='Monthly discounts: '+title;$('autoPricePercent').value='';$('autoPriceFloor').value='';$('autoPriceFloorMode').value=items.length===1?'amount':'maximum_discount';
+ $('autoPriceMessage').textContent='Choose the listings to enroll. No price changes today. Preview then enable; the first reduction is one month later. Existing rules can be paused below. Enable again resets the baseline to today’s live price.';
+ $('autoPriceHistoryRows').innerHTML='';autoPriceRender();$('autoPriceDialog').showModal();
+}
+$('autoPriceTote').onclick=()=>{if(selectedTote)autoPriceOpen(assignedToteItems(selectedTote),selectedTote);};
+$('autoPriceItem').onclick=()=>{if(locked)return;const x=state.items.find(x=>x.id===editingId);if(!x)return;
+ if(['title','ebayId','sku','status','price','listingQty','location','notes'].some(k=>$('f_'+k).value!==String(x[k]??''))||JSON.stringify(editPhotos)!==JSON.stringify(x.photos)){editorMessage('Save your app changes before setting automatic discounts.',true);return;}autoPriceOpen([x],x.title);};
+$('autoPriceRows').onchange=e=>{if(autoPriceBusy||e.target.dataset.autoPrice===undefined)return;autoPriceRows[Number(e.target.dataset.autoPrice)].selected=e.target.checked;autoPriceRender();};
+for(const id of ['autoPricePercent','autoPriceFloorMode','autoPriceFloor'])$(id).oninput=()=>{for(const r of autoPriceRows){r.preview=null;r.message='Preview again';}autoPriceRender();};
+async function autoPriceRun(fn){if(locked)return;locked=true;autoPriceBusy=true;autoPriceRender();try{requireCurrentCloudInventory();await fn();}catch(e){$('autoPriceMessage').textContent=e.message;}finally{autoPriceBusy=false;locked=false;autoPriceRender();}}
+$('autoPriceClose').onclick=()=>{if(!autoPriceBusy)$('autoPriceDialog').close();};
+$('autoPriceDialog').addEventListener('cancel',e=>{if(autoPriceBusy)e.preventDefault();});
+$('autoPricePreview').onclick=()=>autoPriceRun(async()=>{
+ for(const r of autoPriceRows){r.preview=null;if(!r.selected)continue;$('autoPriceMessage').textContent='Reading '+r.title+'…';
+ try{const draft={item_id:r.ebayId,percent:$('autoPricePercent').value.trim(),floor_mode:$('autoPriceFloorMode').value,floor:$('autoPriceFloor').value.trim()};const p=await autoPriceRequest({action:'preview',...draft});r.preview={draft,result:p};r.message='Current $'+p.current+' · next $'+p.next+' · minimum $'+p.floor+' · first due '+new Date(p.first_due).toLocaleDateString();}
+ catch(e){r.message='Needs attention: '+e.message;}autoPriceRender();}
+ $('autoPriceMessage').textContent='Review each minimum. Enable saves only checked, successfully previewed listings. Reductions are monthly percentages of the current price, rounded to cents (minimum one-cent reduction). No catch-up discounts for missed months.';
+});
+$('autoPriceSave').onclick=()=>autoPriceRun(async()=>{
+ const rows=autoPriceRows.filter(r=>r.selected&&r.preview);if(!rows.length)throw Error('Preview first.');
+ if(!confirm('Enable automatic monthly reductions for '+rows.length+' listing(s)? First reduction in one month. They continue while your devices are off, once the server scheduler is enabled.'))return;
+ let count=0;for(const r of rows){const p=r.preview;r.preview=null;try{await autoPriceRequest({action:'save',...p.draft,expected_price:p.result.current});r.message='Rule enabled. First reduction in one month.';count++;}catch(e){r.message='Not enabled: '+e.message;for(const remaining of rows)remaining.preview=null;$('autoPriceMessage').textContent=count+' enabled. Stopped: '+e.message;return;}autoPriceRender();}
+ $('autoPriceMessage').textContent=count+' rules enabled. Use Rules / History to check server status. Your inventory prices update through eBay Refresh after scheduled changes.';
+});
+async function autoPriceHistory(){
+ const data=await autoPriceRequest({action:'list'});
+ $('autoPriceMessage').textContent=data.enabled?'Server scheduler is enabled. Due listings are handled gradually.':'Server scheduler is DISABLED. Saved rules cannot change prices until setup is completed.';
+ const rules=data.rules.map(r=>'<div class="panel"><strong>'+esc(r.title)+'</strong><p>'+esc(r.item_id)+' · '+esc(r.status)+' · '+esc((r.percent_bps/100)+'% monthly')+' · minimum $'+(Number(r.floor_cents)/100).toFixed(2)+'<br>Next due: '+esc(new Date(r.next_due).toLocaleString())+'<br>'+esc(r.message)+'</p><button type="button" data-auto-pause="'+esc(r.item_id)+'">Pause this rule</button></div>').join('');
+ const events=data.events.map(e=>'<p>'+esc(new Date(e.created_at).toLocaleString())+' · '+esc(e.title)+' · '+esc(e.status)+(e.target_cents===null?'':' · $'+(Number(e.before_cents)/100).toFixed(2)+' → $'+(Number(e.target_cents)/100).toFixed(2))+' · '+esc(e.message)+'</p>').join('');
+ $('autoPriceHistoryRows').innerHTML='<h3>Saved rules</h3>'+(rules||'<p>No rules saved.</p>')+'<h3>Recent history</h3>'+(events||'<p>No scheduled attempts yet.</p>');
+}
+$('autoPriceHistory').onclick=()=>autoPriceRun(autoPriceHistory);
+$('autoPriceHistoryRows').onclick=e=>{const id=e.target.dataset.autoPause;if(!id)return;autoPriceRun(async()=>{await autoPriceRequest({action:'pause',item_id:id});await autoPriceHistory();});};
 
 async function start() {
  if (/\/(electronics-inventory|old-carpenters-notepad)(\/|$)/i.test(location.pathname)) {
